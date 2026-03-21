@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# PyInstaller
+*.spec.bak
+
+# Environment
+.env
+
+# Translator state
+.ksp-translator-state.json
