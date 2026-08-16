@@ -1,0 +1,29 @@
+{
+  "schema": "kerbaloc/glossary@1",
+  "lang": "ko",
+  "scope": "core",
+  "modId": null,
+  "entries": [
+    { "en": "Kerbal", "ko": "커벌", "aliases": ["kerbals"], "policy": "translate", "note": null },
+    { "en": "Kerbin", "ko": "커빈", "aliases": [], "policy": "translate", "note": null },
+    { "en": "Mun", "ko": "문", "aliases": [], "policy": "translate", "note": null },
+    { "en": "Minmus", "ko": "민무스", "aliases": [], "policy": "translate", "note": null },
+    { "en": "delta-v", "ko": "델타-V", "aliases": ["deltaV", "dV", "delta v"], "policy": "translate", "note": null },
+    { "en": "apoapsis", "ko": "원점", "aliases": ["Ap"], "policy": "translate", "note": "약어 Ap는 영어 유지" },
+    { "en": "periapsis", "ko": "근점", "aliases": ["Pe"], "policy": "translate", "note": "약어 Pe는 영어 유지" },
+    { "en": "thrust", "ko": "추력", "aliases": [], "policy": "translate", "note": null },
+    { "en": "orbit", "ko": "궤도", "aliases": [], "policy": "translate", "note": null },
+    { "en": "maneuver node", "ko": "기동 노드", "aliases": [], "policy": "translate", "note": null },
+    { "en": "oxidizer", "ko": "산화제", "aliases": [], "policy": "translate", "note": null },
+    { "en": "liquid fuel", "ko": "액체 연료", "aliases": ["LiquidFuel"], "policy": "translate", "note": null },
+    { "en": "Water", "ko": "식수", "aliases": [], "policy": "translate", "note": "1자 '물'은 DisplayName일 때 GetShortName Substring 예외로 로딩 프리즈 (부록 G)" },
+    { "en": "Ore", "ko": "광물", "aliases": [], "policy": "translate", "note": "1자 번역 금지 (DisplayName 프리즈)" },
+    { "en": "stage", "ko": "스테이지", "aliases": [], "policy": "translate", "note": null },
+    { "en": "docking port", "ko": "도킹 포트", "aliases": [], "policy": "translate", "note": null },
+    { "en": "m/s", "ko": null, "aliases": [], "policy": "keep", "note": "SI 단위 영어 유지" },
+    { "en": "kN", "ko": null, "aliases": [], "policy": "keep", "note": null },
+    { "en": "EC/s", "ko": null, "aliases": [], "policy": "keep", "note": null },
+    { "en": "VAB", "ko": "조립동", "aliases": [], "policy": "translate", "note": "Dobie 관행" },
+    { "en": "SPH", "ko": "격납고", "aliases": [], "policy": "translate", "note": null }
+  ]
+}

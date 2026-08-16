@@ -3,6 +3,7 @@ pub mod cfg;
 pub mod ckan;
 pub mod doctor;
 pub mod game;
+pub mod glossary;
 pub mod llm;
 pub mod hash;
 pub mod loc;
