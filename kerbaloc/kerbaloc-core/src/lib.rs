@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod game;
 pub mod hash;
 pub mod loc;
+pub mod pack;
 pub mod scan;
 pub mod tokens;
 pub mod validate;

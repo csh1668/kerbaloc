@@ -27,6 +27,16 @@ enum Cmd {
         #[arg(long)]
         backup: Option<PathBuf>,
     },
+    /// 팩 디렉터리 검증 (CI에서도 사용)
+    Validate { dir: PathBuf },
+    /// 팩 설치 (GameData/KerbaLoc/<lang>/<ModId>/)
+    Install { dir: PathBuf },
+    /// 설치된 팩 제거
+    Remove {
+        mod_id: String,
+        #[arg(long, default_value = "ko")]
+        lang: String,
+    },
 }
 
 fn resolve_root(cli_root: Option<PathBuf>) -> PathBuf {
@@ -103,6 +113,38 @@ fn main() {
                     println!("{n}개 파일을 {}에 백업했습니다.", zip.display());
                 }
                 println!("복원 방법: Squad/SquadExpansion → Steam 무결성 검사, 모드 → CKAN 재설치 또는 재다운로드.");
+            }
+        }
+        Cmd::Validate { dir } => {
+            let r = kerbaloc_core::pack::validate_pack(&dir, None);
+            for w in &r.warnings {
+                println!("경고: {w}");
+            }
+            for e in &r.errors {
+                println!("오류: {e}");
+            }
+            if r.errors.is_empty() {
+                println!("검증 통과 (경고 {}건)", r.warnings.len());
+            } else {
+                std::process::exit(1);
+            }
+        }
+        Cmd::Install { dir } => {
+            let r = kerbaloc_core::pack::validate_pack(&dir, None);
+            if !r.errors.is_empty() {
+                for e in &r.errors {
+                    eprintln!("오류: {e}");
+                }
+                std::process::exit(1);
+            }
+            let dest = kerbaloc_core::pack::install_pack(&root, &dir).expect("설치 실패");
+            println!("설치됨: {}", dest.display());
+        }
+        Cmd::Remove { mod_id, lang } => {
+            if kerbaloc_core::pack::remove_pack(&root, &lang, &mod_id).expect("제거 실패") {
+                println!("제거됨: {lang}/{mod_id}");
+            } else {
+                println!("설치되어 있지 않음: {lang}/{mod_id}");
             }
         }
     }
