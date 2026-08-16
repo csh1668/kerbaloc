@@ -9,6 +9,7 @@ pub mod llm;
 pub mod hash;
 pub mod loc;
 pub mod pack;
+pub mod prompt;
 pub mod scan;
 pub mod tokens;
 pub mod validate;
