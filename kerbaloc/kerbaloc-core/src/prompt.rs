@@ -2,7 +2,7 @@ use crate::llm::TranslateItem;
 
 /// 시스템 프롬프트 (부록 B §3.2). 캐시 히트를 위해 바이트 안정 — 시각/난수 금지.
 pub fn system_prompt() -> &'static str {
-    r#"당신은 Kerbal Space Program 로컬라이제이션 전문 번역가입니다.
+    r##"당신은 Kerbal Space Program 로컬라이제이션 전문 번역가입니다.
 영어 원문을 한국어로 번역합니다. 입력은 JSON 배열이고, 각 항목의 "en"을
 번역해 {"i": <같은 인덱스>, "ko": "<번역문>"} 형태로 반환합니다.
 모든 항목을 빠짐없이, 입력과 같은 개수로 반환하십시오.
@@ -69,7 +69,7 @@ pub fn system_prompt() -> &'static str {
 
 ## 출력
 JSON 배열만 반환합니다. 설명, 주석, 마크다운을 붙이지 마십시오.
-"#
+"##
 }
 
 /// 모드 컨텍스트 블록 (모드당 동일 — 캐시 대상).
