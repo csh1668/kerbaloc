@@ -43,6 +43,19 @@
     pack_dir: string;
   } | null>(null);
 
+  // 키 에디터
+  interface ModKey {
+    key: string;
+    en: string;
+    ko: string | null;
+    edited?: string;
+  }
+  let keyEditor = $state<{ modId: string; keys: ModKey[] } | null>(null);
+  let keyFilter = $state("");
+  let keyLimit = $state(300);
+  let keyErrors = $state<string[]>([]);
+  let keySaving = $state(false);
+
   // 설정
   let showSettings = $state(false);
   let settings = $state<{ ksp_root: string | null; gemini_api_key: string | null; nick: string | null }>({
@@ -132,6 +145,61 @@
     }
   }
 
+  async function openKeyEditor(modId: string) {
+    loading = `${modId} 키 로드 중…`;
+    keyErrors = [];
+    keyFilter = "";
+    keyLimit = 300;
+    try {
+      const keys: ModKey[] = await invoke("get_mod_keys", { modId });
+      keyEditor = { modId, keys };
+    } catch (e) {
+      error = String(e);
+    } finally {
+      loading = "";
+    }
+  }
+
+  function filteredKeys(): ModKey[] {
+    if (!keyEditor) return [];
+    const q = keyFilter.trim().toLowerCase();
+    if (!q) return keyEditor.keys;
+    return keyEditor.keys.filter(
+      (k) =>
+        k.key.toLowerCase().includes(q) ||
+        k.en.toLowerCase().includes(q) ||
+        (k.ko ?? "").toLowerCase().includes(q) ||
+        (k.edited ?? "").toLowerCase().includes(q),
+    );
+  }
+
+  async function saveKeys() {
+    if (!keyEditor) return;
+    keySaving = true;
+    keyErrors = [];
+    try {
+      // 현재 값(기존 번역 유지 + 편집 반영) 전체를 보낸다
+      const edits = keyEditor.keys
+        .map((k) => ({ key: k.key, ko: (k.edited ?? k.ko ?? "").trim() }))
+        .filter((e) => e.ko.length > 0);
+      const r: { errors: string[]; installed: string | null } = await invoke("save_mod_keys", {
+        modId: keyEditor.modId,
+        edits,
+      });
+      if (r.errors.length > 0) {
+        keyErrors = r.errors;
+      } else {
+        toast = `${keyEditor.modId} 저장·설치 완료 (${edits.length}키, 게임 재시작 필요)`;
+        keyEditor = null;
+        await refresh();
+      }
+    } catch (e) {
+      keyErrors = [String(e)];
+    } finally {
+      keySaving = false;
+    }
+  }
+
   async function saveSettings() {
     await invoke("save_settings", { settings });
     showSettings = false;
@@ -175,7 +243,7 @@
       {#each units as u (u.mod_id)}
         {@const variants = dbPacks.get(u.mod_id) ?? []}
         {@const fresh = variants.some((v) => v.srcSha256 === u.source_hash)}
-        <tr>
+        <tr class="row" onclick={() => openKeyEditor(u.mod_id)}>
           <td title={u.mod_id}>{u.display_name}</td>
           <td>{u.version ?? "-"}</td>
           <td class="num">{u.keys}</td>
@@ -184,7 +252,8 @@
             {:else if variants.length > 0}<span class="badge db">DB {variants.length}변형{fresh ? "" : " (버전 다름)"}</span>
             {:else}<span class="badge none">미번역</span>{/if}
           </td>
-          <td class="actions">
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <td class="actions" onclick={(e) => e.stopPropagation()}>
             {#if u.installed}
               <button onclick={() => removePack(u.mod_id)}>제거</button>
             {:else if variants.length > 0}
@@ -229,6 +298,57 @@
           <button onclick={() => { translating = null; result = null; }}>닫기</button>
         </div>
       {/if}
+    </div>
+  </div>
+{/if}
+
+{#if keyEditor}
+  {@const shown = filteredKeys()}
+  <div class="modal-backdrop">
+    <div class="modal wide">
+      <h2>{keyEditor.modId} — 번역 키 ({keyEditor.keys.length}개)</h2>
+      <div class="key-toolbar">
+        <input placeholder="키·원문·번역 검색…" bind:value={keyFilter} />
+        <span class="hint">{shown.length}개 일치</span>
+      </div>
+      {#if keyErrors.length > 0}
+        <div class="error">{keyErrors.slice(0, 10).join("\n")}{keyErrors.length > 10 ? `\n… 외 ${keyErrors.length - 10}건` : ""}</div>
+      {/if}
+      <div class="key-table">
+        <table>
+          <thead>
+            <tr><th style="width:26%">키</th><th style="width:37%">원문</th><th style="width:37%">번역 (편집 가능)</th></tr>
+          </thead>
+          <tbody>
+            {#each shown.slice(0, keyLimit) as k (k.key)}
+              <tr>
+                <td class="key-name" title={k.key}>{k.key}</td>
+                <td class="key-en">{k.en}</td>
+                <td>
+                  <input
+                    class="key-ko"
+                    value={k.edited ?? k.ko ?? ""}
+                    placeholder="(미번역 — 영어 폴백)"
+                    oninput={(e) => (k.edited = (e.target as HTMLInputElement).value)}
+                  />
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        {#if shown.length > keyLimit}
+          <button class="more" onclick={() => (keyLimit += 500)}>
+            더 보기 ({shown.length - keyLimit}개 남음)
+          </button>
+        {/if}
+      </div>
+      <div class="modal-actions">
+        <button class="primary" disabled={keySaving} onclick={saveKeys}>
+          {keySaving ? "저장 중…" : "저장·게임에 설치"}
+        </button>
+        <button onclick={() => (keyEditor = null)}>닫기</button>
+        <span class="hint">저장 시 검증 후 manual 팩으로 설치됩니다. 빈 칸은 영어 폴백.</span>
+      </div>
     </div>
   </div>
 {/if}
@@ -289,4 +409,15 @@
   .review-item .violations { color: #db8f8f; font-size: 0.8rem; }
   .review-item input { width: 100%; box-sizing: border-box; background: #14161a; color: #e6e6e6; border: 1px solid #444; border-radius: 6px; padding: 0.35rem; }
   .hint { color: #999; font-size: 0.8rem; }
+  tr.row { cursor: pointer; }
+  tr.row:hover { background: #1d2128; }
+  .modal.wide { width: min(980px, 95vw); }
+  .key-toolbar { display: flex; gap: 0.6rem; align-items: center; margin: 0.5rem 0; }
+  .key-toolbar input { flex: 1; background: #14161a; color: #e6e6e6; border: 1px solid #444; border-radius: 6px; padding: 0.4rem; }
+  .key-table { max-height: 55vh; overflow-y: auto; border: 1px solid #2a2e35; border-radius: 8px; }
+  .key-table table { margin-top: 0; }
+  .key-name { font-family: monospace; font-size: 0.78rem; color: #8fbadb; word-break: break-all; }
+  .key-en { font-size: 0.85rem; color: #bbb; word-break: break-word; }
+  input.key-ko { width: 100%; box-sizing: border-box; background: #14161a; color: #e6e6e6; border: 1px solid #3a3f48; border-radius: 6px; padding: 0.3rem; }
+  button.more { width: 100%; margin: 0.4rem 0; }
 </style>

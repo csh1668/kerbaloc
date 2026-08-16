@@ -1,6 +1,8 @@
 //! KerbaLoc 스튜디오 — kerbaloc-core를 Tauri 커맨드로 노출.
 
-use kerbaloc_core::{dbclient, game, glossary::Glossary, jobstore::JobStore, pack, packgen, pipeline, scan, share};
+use kerbaloc_core::{
+    dbclient, game, glossary::Glossary, jobstore::JobStore, pack, packgen, pipeline, scan, share,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
@@ -83,7 +85,9 @@ fn scan_units(app: AppHandle) -> Result<Vec<UnitInfo>, String> {
 
 #[tauri::command]
 async fn db_index() -> Result<serde_json::Value, String> {
-    let m = dbclient::fetch_manifest().await.map_err(|e| e.to_string())?;
+    let m = dbclient::fetch_manifest()
+        .await
+        .map_err(|e| e.to_string())?;
     let i = dbclient::fetch_index(&m).await.map_err(|e| e.to_string())?;
     serde_json::to_value(serde_json::json!({
         "commit": m.commit,
@@ -101,9 +105,15 @@ async fn db_index() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn install_from_db(app: AppHandle, mod_id: String, variant: Option<String>) -> Result<String, String> {
+async fn install_from_db(
+    app: AppHandle,
+    mod_id: String,
+    variant: Option<String>,
+) -> Result<String, String> {
     let root = resolve_root(&app)?;
-    let m = dbclient::fetch_manifest().await.map_err(|e| e.to_string())?;
+    let m = dbclient::fetch_manifest()
+        .await
+        .map_err(|e| e.to_string())?;
     let i = dbclient::fetch_index(&m).await.map_err(|e| e.to_string())?;
     let p = i
         .packs
@@ -111,7 +121,11 @@ async fn install_from_db(app: AppHandle, mod_id: String, variant: Option<String>
         .find(|p| p.mod_id == mod_id)
         .ok_or_else(|| format!("DB에 {mod_id} 없음"))?;
     let v = match &variant {
-        Some(id) => p.variants.iter().find(|v| &v.variant_id == id).ok_or("변형 없음")?,
+        Some(id) => p
+            .variants
+            .iter()
+            .find(|v| &v.variant_id == id)
+            .ok_or("변형 없음")?,
         None => p.variants.last().ok_or("변형 없음")?,
     };
     let tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
@@ -194,16 +208,28 @@ async fn translate_mod(app: AppHandle, mod_id: String) -> Result<TranslateResult
         &manifest,
         8,
         &move |done, total, cost| {
-            let _ = app2.emit("translate-progress", TranslateProgress { done, total, cost });
+            let _ = app2.emit(
+                "translate-progress",
+                TranslateProgress { done, total, cost },
+            );
         },
     )
     .await
     .map_err(|e| e.to_string())?;
 
     let variant = packgen::make_variant_id("gemini31flashlite", &nick);
-    let pack_dir = root.join("KerbaLoc-packs").join(&unit.mod_id).join(&variant);
-    packgen::build_pack(&pack_dir, &unit, &report.ok, &variant, "gemini-3.1-flash-lite")
-        .map_err(|e| e.to_string())?;
+    let pack_dir = root
+        .join("KerbaLoc-packs")
+        .join(&unit.mod_id)
+        .join(&variant);
+    packgen::build_pack(
+        &pack_dir,
+        &unit,
+        &report.ok,
+        &variant,
+        "gemini-3.1-flash-lite",
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(TranslateResult {
         ok: report.ok.len(),
@@ -233,13 +259,129 @@ fn install_local_pack(app: AppHandle, pack_dir: String) -> Result<String, String
 
 #[tauri::command]
 async fn share_pack_cmd(app: AppHandle, pack_dir: String) -> Result<String, String> {
-    let nick = load_settings_inner(&app).nick.unwrap_or_else(|| "anon".into());
-    let proxy =
-        std::env::var("KERBALOC_PROXY_URL").unwrap_or_else(|_| share::DEFAULT_PROXY.into());
+    let nick = load_settings_inner(&app)
+        .nick
+        .unwrap_or_else(|| "anon".into());
+    let proxy = std::env::var("KERBALOC_PROXY_URL").unwrap_or_else(|_| share::DEFAULT_PROXY.into());
     let r = share::share_pack(&proxy, &PathBuf::from(pack_dir), &nick)
         .await
         .map_err(|e| e.to_string())?;
     Ok(r.pr_url)
+}
+
+#[derive(Serialize)]
+struct ModKey {
+    key: String,
+    en: String,
+    ko: Option<String>,
+}
+
+/// 모드의 전체 번역 키 목록: 원문(en-us) + 설치된 팩의 번역(있으면).
+#[tauri::command]
+fn get_mod_keys(app: AppHandle, mod_id: String) -> Result<Vec<ModKey>, String> {
+    use kerbaloc_core::{cfg, loc};
+    let root = resolve_root(&app)?;
+    let unit = scan::scan_gamedata(&root)
+        .into_iter()
+        .find(|u| u.mod_id == mod_id)
+        .ok_or_else(|| format!("설치본에서 {mod_id}를 찾지 못했습니다"))?;
+    let installed_cfg = root
+        .join("GameData")
+        .join("KerbaLoc")
+        .join("ko")
+        .join(&mod_id)
+        .join("Localization")
+        .join("ko.cfg");
+    let translated = std::fs::read_to_string(&installed_cfg)
+        .ok()
+        .and_then(|t| cfg::parse(&t).ok())
+        .map(|r| loc::extract_localization(&r, "ko"))
+        .unwrap_or_default();
+    Ok(unit
+        .entries
+        .iter()
+        .map(|(k, en)| ModKey {
+            key: k.clone(),
+            en: en.clone(),
+            ko: translated.get(k).cloned(),
+        })
+        .collect())
+}
+
+#[derive(Deserialize)]
+struct KeyEdit {
+    key: String,
+    ko: String,
+}
+
+#[derive(Serialize)]
+struct SaveKeysResult {
+    errors: Vec<String>,
+    installed: Option<String>,
+    pack_dir: Option<String>,
+}
+
+/// 편집된 번역을 검증 → manual 변형 팩 생성 → 게임에 설치.
+/// 오류가 있으면 아무것도 쓰지 않고 오류 목록만 반환.
+#[tauri::command]
+fn save_mod_keys(
+    app: AppHandle,
+    mod_id: String,
+    edits: Vec<KeyEdit>,
+) -> Result<SaveKeysResult, String> {
+    use kerbaloc_core::validate::{validate_key_translation, Severity};
+    use std::collections::BTreeMap;
+    let root = resolve_root(&app)?;
+    let settings = load_settings_inner(&app);
+    let nick = settings.nick.unwrap_or_else(|| "anon".into());
+    let unit = scan::scan_gamedata(&root)
+        .into_iter()
+        .find(|u| u.mod_id == mod_id)
+        .ok_or_else(|| format!("설치본에서 {mod_id}를 찾지 못했습니다"))?;
+
+    let mut translations: BTreeMap<String, String> = BTreeMap::new();
+    let mut errors: Vec<String> = vec![];
+    for e in &edits {
+        let ko = e.ko.trim();
+        if ko.is_empty() {
+            continue; // 빈 값 = 미번역 (영어 폴백)
+        }
+        match unit.entries.get(&e.key) {
+            None => errors.push(format!("{}: 원문에 없는 키 (모드 업데이트됨?)", e.key)),
+            Some(en) => {
+                for f in validate_key_translation(&e.key, en, ko) {
+                    if matches!(f.severity, Severity::Error) {
+                        errors.push(format!("{}: [{}] {}", e.key, f.rule, f.message));
+                    }
+                }
+                translations.insert(e.key.clone(), ko.to_string());
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Ok(SaveKeysResult {
+            errors,
+            installed: None,
+            pack_dir: None,
+        });
+    }
+    if translations.is_empty() {
+        return Err("번역된 키가 하나도 없습니다".into());
+    }
+
+    let variant = packgen::make_variant_id("manual", &nick);
+    let pack_dir = root
+        .join("KerbaLoc-packs")
+        .join(&unit.mod_id)
+        .join(&variant);
+    packgen::build_pack(&pack_dir, &unit, &translations, &variant, "manual")
+        .map_err(|e| e.to_string())?;
+    let dest = pack::install_pack(&root, &pack_dir).map_err(|e| e.to_string())?;
+    Ok(SaveKeysResult {
+        errors: vec![],
+        installed: Some(dest.to_string_lossy().to_string()),
+        pack_dir: Some(pack_dir.to_string_lossy().to_string()),
+    })
 }
 
 #[tauri::command]
@@ -270,6 +412,8 @@ pub fn run() {
             translate_mod,
             install_local_pack,
             share_pack_cmd,
+            get_mod_keys,
+            save_mod_keys,
             load_settings,
             save_settings,
         ])
