@@ -40,5 +40,5 @@ KSP(Kerbal Space Program) 1.12.x 한국어화 도구 모음.
 | 1 | kerbaloc-core + CLI (파서/해시/검증/스캔/설치/언어 전환) | ✅ 완료 |
 | 2 | 번역 DB 레포([kerbaloc-db](https://github.com/csh1668/kerbaloc-db)) + CI + 다운로드 클라이언트 | ✅ 완료 (manifest→jsDelivr@SHA→검증 설치 E2E) |
 | 3 | LLM 번역 파이프라인 + 팩 생성 | ✅ 완료 (CRP 240키 E2E: $0.0093, 검수 0) |
-| 4 | Tauri 스튜디오 (대시보드/에디터/공유) | 예정 |
-| 5 | 익명 업로드 프록시 (Cloudflare Worker) | 예정 |
+| 4 | Tauri 스튜디오 (`kerbaloc-app` — 대시보드/번역/검수/공유 GUI) | ✅ v1 (빌드·타입체크 통과) |
+| 5 | 익명 업로드 프록시 ([kerbaloc-proxy](https://github.com/csh1668/kerbaloc-proxy)) | ✅ 배포·실PR E2E (`db share` → PR#1 → CI → 머지 → DB 반영) |
