@@ -48,7 +48,7 @@ kerbaloc/                       # 새 하위 디렉터리 (기존 src/ksp_transl
 └── tests-fixtures/             # 합성 GameData 트리 등 (각 태스크에서 생성)
 ```
 
-`research/`의 실데이터(en-us.cfg 934KB, ja.cfg, Dobie 사전은 게임 폴더)는 골든 테스트 입력.
+`research/`의 실데이터(en-us.cfg 934KB, ja.cfg, 구 커뮤니티 패치 사전은 게임 폴더)는 골든 테스트 입력.
 
 ---
 
@@ -196,8 +196,8 @@ fn parses_basic_localization_block() {
 
 #[test]
 fn strips_inline_comment_after_node_name() {
-    // 실존 사례: Dobie dictionary.cfg의 "en-us// 주석"
-    let text = "Localization\n{\n\ten-us// Dobie 24.06.15\n\t{\n\t\t#a = b\n\t}\n}\n";
+    // 실존 사례: 구 커뮤니티 패치 dictionary.cfg의 "en-us// 주석"
+    let text = "Localization\n{\n\ten-us// 구 커뮤니티 패치 24.06.15\n\t{\n\t\t#a = b\n\t}\n}\n";
     let root = parse(text).unwrap();
     assert_eq!(loc(&root).children[0].name, "en-us");
 }
@@ -734,22 +734,22 @@ fn empty_translation_is_error() {
 }
 
 #[test]
-fn golden_dobie_dictionary_passes() {
-    // 사람이 검증한 번역(Dobie)이 우리 검증기를 통과하지 못하면 검증기가 틀린 것 (부록 B §6)
+fn golden_legacy_dictionary_passes() {
+    // 사람이 검증한 번역(구 커뮤니티 패치)이 우리 검증기를 통과하지 못하면 검증기가 틀린 것 (부록 B §6)
     use kerbaloc_core::{cfg::parse, loc::extract_localization};
     let stock = std::fs::read_to_string(
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../research/stock-dictionary/en-us.cfg")).unwrap();
-    let dobie_path = r"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\GameData\Squad\Localization\dictionary.cfg";
-    let Ok(dobie) = std::fs::read_to_string(dobie_path) else { return; }; // 게임 미설치 환경은 스킵
+    let legacy_path = r"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\GameData\Squad\Localization\dictionary.cfg";
+    let Ok(legacy_text) = std::fs::read_to_string(legacy_path) else { return; }; // 게임 미설치 환경은 스킵
     let en = extract_localization(&parse(&stock).unwrap(), "en-us");
-    let ko = extract_localization(&parse(&dobie).unwrap(), "en-us"); // Dobie는 en-us 노드에 한국어
+    let ko = extract_localization(&parse(&legacy_text).unwrap(), "en-us"); // 구 패치는 en-us 노드에 한국어
     let mut error_count = 0;
     for (k, dst) in &ko {
         if let Some(src) = en.get(k) {
             error_count += errors(src, dst).len();
         }
     }
-    assert_eq!(error_count, 0, "Dobie 번역에서 검증기 오탐 {error_count}건");
+    assert_eq!(error_count, 0, "구 커뮤니티 패치 번역에서 검증기 오탐 {error_count}건");
 }
 ```
 
@@ -855,13 +855,13 @@ pub fn validate_translation(src: &str, dst: &str) -> Vec<Finding> {
 ```
 주의: 다중집합 비교는 정렬된 Vec 동등 비교로 충분(extract_tokens가 정렬 반환). `lib.rs`에 `pub mod tokens; pub mod validate;`.
 
-- [ ] **Step 4: 통과 확인** — `cargo test -p kerbaloc-core --test validate`. **골든 테스트에서 오탐이 나오면 Dobie 데이터를 열어 원인 규칙을 완화**(예: 원문에 없던 리치태그를 번역이 추가하는 정당 사례) — 검증기 조정이 원칙, 테스트 기대값 완화는 금지.
+- [ ] **Step 4: 통과 확인** — `cargo test -p kerbaloc-core --test validate`. **골든 테스트에서 오탐이 나오면 구 커뮤니티 패치 데이터를 열어 원인 규칙을 완화**(예: 원문에 없던 리치태그를 번역이 추가하는 정당 사례) — 검증기 조정이 원칙, 테스트 기대값 완화는 금지.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add kerbaloc
-git commit -m "feat(core): 보존 토큰 추출기 + 번역 검증기 9규칙 (Dobie 골든 통과)"
+git commit -m "feat(core): 보존 토큰 추출기 + 번역 검증기 9규칙 (구 커뮤니티 패치 골든 통과)"
 ```
 
 ---
@@ -1777,7 +1777,7 @@ pub fn backup_polluted(ksp_root: &Path, out_zip: &Path, items: &[Pollution]) -> 
         }
 ```
 
-- [ ] **Step 4: 통과 확인** — 테스트 PASS 후 실설치본 스모크: `cargo run -p kerbaloc-cli -- doctor` → Squad dictionary.cfg(Dobie)와 구도구가 교체한 모드들이 목록에 떠야 한다.
+- [ ] **Step 4: 통과 확인** — 테스트 PASS 후 실설치본 스모크: `cargo run -p kerbaloc-cli -- doctor` → Squad dictionary.cfg(구 커뮤니티 패치)와 구도구가 교체한 모드들이 목록에 떠야 한다.
 
 - [ ] **Step 5: Commit**
 
@@ -2108,7 +2108,7 @@ Localization
 - [ ] **Step 2: 사전 확인 — doctor**
 
 Run: `cargo run -p kerbaloc-cli -- doctor`
-Dobie 오염이 보고되는 상태 그대로 진행한다(스파이크는 폴백 검증이 아니라 렌더링 검증이 1차 목적). 단, **폴백 검증(체크 c)을 위해서는 Steam 무결성 검사로 Squad 원복 후 재실행이 정확**함을 결과 문서에 명시.
+구 커뮤니티 패치 오염이 보고되는 상태 그대로 진행한다(스파이크는 폴백 검증이 아니라 렌더링 검증이 1차 목적). 단, **폴백 검증(체크 c)을 위해서는 Steam 무결성 검사로 Squad 원복 후 재실행이 정확**함을 결과 문서에 명시.
 
 - [ ] **Step 3: 적용**
 
@@ -2124,7 +2124,7 @@ Expected: `언어: ko`, 설치 경로 `GameData/KerbaLoc/ko/Squad` 출력.
 사용자에게 KSP 실행을 요청하고 다음 4개를 확인받는다:
 - (a) 메인 메뉴에 "게임 시작 (스파이크)" 등 **한글 렌더링** 여부 (폰트 박스□ 없이)
 - (b) 메뉴 폰트 매칭 — 메인 메뉴 글꼴이 깨지지 않는지
-- (c) 스파이크 팩에 없는 문자열이 **영어로 폴백**되는지 (Dobie 잔재로 한국어가 보일 수 있음 — 그 경우 이 체크는 Squad 원복 후 재검)
+- (c) 스파이크 팩에 없는 문자열이 **영어로 폴백**되는지 (구 커뮤니티 패치 잔재로 한국어가 보일 수 있음 — 그 경우 이 체크는 Squad 원복 후 재검)
 - (d) `KSP.log`에 새 오류/예외 없음: `Select-String -Path "<root>\KSP.log" -Pattern "Exception|error" | Select-Object -Last 30`
 
 - [ ] **Step 5: 결과 기록 + 원복**

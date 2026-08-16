@@ -23,7 +23,7 @@
     { "en": "m/s", "ko": null, "aliases": [], "policy": "keep", "note": "SI 단위 영어 유지" },
     { "en": "kN", "ko": null, "aliases": [], "policy": "keep", "note": null },
     { "en": "EC/s", "ko": null, "aliases": [], "policy": "keep", "note": null },
-    { "en": "VAB", "ko": "조립동", "aliases": [], "policy": "translate", "note": "Dobie 관행" },
+    { "en": "VAB", "ko": "조립동", "aliases": [], "policy": "translate", "note": null },
     { "en": "SPH", "ko": "격납고", "aliases": [], "policy": "translate", "note": null }
   ]
 }

@@ -79,7 +79,7 @@ CI: `translate` 미준수·`keep` 위반은 **경고**(차단 아님), 단 자�
 
 ## 2. variantId 명명 규칙
 
-**형식** `<YYYY-MM-DD>-<method>-<nick>[-<n>]` — 예 `2026-08-16-gemini25pro-nick`, `2026-08-16-manual-dobie`.
+**형식** `<YYYY-MM-DD>-<method>-<nick>[-<n>]` — 예 `2026-08-16-gemini25pro-nick`, `2026-08-16-manual-hong`.
 
 - 문자 `[a-z0-9-]` 소문자 강제, 8~64자. 날짜는 UTC.
 - `method`: 통제 어휘 — 모델 슬러그(`gemini-2.5-pro`→`gemini25pro`) 또는 `manual`/`mixed`/`import`, ≤12자.
@@ -160,6 +160,6 @@ permissions `{contents: read, pull-requests: write}`, PR별 concurrency.
 6. 명칭 KerbaLoc 권고
 
 ## 7. 미해결/후속
-MM `:AFTER[]` vs `:FINAL` 실게임 검증 / `db-latest` CDN TTL 실측 → manifest 폴링 주기 / 팩 1000개 초과 시 샤딩 재검토 / Dobie 시드 license 값 — 원작자 협의.
+MM `:AFTER[]` vs `:FINAL` 실게임 검증 / `db-latest` CDN TTL 실측 → manifest 폴링 주기 / 팩 1000개 초과 시 샤딩 재검토 / 구 패치 시드 license 값 — 원작자 협의.
 
 출처: GitHub 비인증 레이트리밋 변경(2025-05) changelog · REST rate limits docs · raw 429 사례(bazarr#3057, opentofu#2802) · jsDelivr 한도/캐시 이슈(#18268, #18502, #18532) · jsDelivr /gh/ docs · 릴리스 자산 다운로드 community#8535.

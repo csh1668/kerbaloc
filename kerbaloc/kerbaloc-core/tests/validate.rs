@@ -40,7 +40,7 @@ fn escaped_braces_ok_but_must_match() {
 
 #[test]
 fn literal_newline_count_is_warning() {
-    // \n은 장식용 — 게임을 깨지 않으므로 Warning (Dobie 실측 225건 근거)
+    // \n은 장식용 — 게임을 깨지 않으므로 Warning (구 패치 실측 225건 근거)
     let findings = validate_translation("a\\nb", "가나");
     let f = findings
         .iter()
@@ -77,24 +77,24 @@ fn empty_translation_is_error() {
 }
 
 #[test]
-fn golden_dobie_dictionary_passes() {
-    // 사람이 검증한 번역(Dobie)이 우리 검증기를 통과하지 못하면 검증기가 틀린 것 (부록 B §6)
+fn golden_legacy_dictionary_passes() {
+    // 사람이 검증한 번역(구 커뮤니티 패치)이 우리 검증기를 통과하지 못하면 검증기가 틀린 것 (부록 B §6)
     use kerbaloc_core::{cfg::parse, loc::extract_localization};
     let stock = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../research/stock-dictionary/en-us.cfg"
     ))
     .unwrap();
-    let dobie_path = r"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\GameData\Squad\Localization\dictionary.cfg";
-    let Ok(dobie) = std::fs::read_to_string(dobie_path) else {
+    let legacy_path = r"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\GameData\Squad\Localization\dictionary.cfg";
+    let Ok(legacy_text) = std::fs::read_to_string(legacy_path) else {
         return; // 게임 미설치 환경은 스킵
     };
     let en = extract_localization(&parse(&stock).unwrap(), "en-us");
-    let ko = extract_localization(&parse(&dobie).unwrap(), "en-us"); // Dobie는 en-us 노드에 한국어
-                                                                     // 검증기가 잡아낸 Dobie 번역의 실제 결함 (2026-08-16 전수 확인):
+    let ko = extract_localization(&parse(&legacy_text).unwrap(), "en-us"); // 구 패치는 en-us 노드에 한국어
+                                                                     // 검증기가 잡아낸 구 패치 번역의 실제 결함 (2026-08-16 전수 확인):
                                                                      // 토큰 오타(<<2>]), 토큰 누락/오용, 선택 토큰 닫힘 누락(<<1[자동/수동>>),
                                                                      // richtext 태그 누락, 키 밀림 등. 검증기의 정탐이므로 골든에서 제외한다.
-    const KNOWN_DOBIE_DEFECTS: &[&str] = &[
+    const KNOWN_LEGACY_DEFECTS: &[&str] = &[
         "#autoLOC_250813",
         "#autoLOC_284439",
         "#autoLOC_307865",
@@ -111,7 +111,7 @@ fn golden_dobie_dictionary_passes() {
     ];
     let mut failures: Vec<String> = vec![];
     for (k, dst) in &ko {
-        if KNOWN_DOBIE_DEFECTS.contains(&k.as_str()) {
+        if KNOWN_LEGACY_DEFECTS.contains(&k.as_str()) {
             continue;
         }
         if let Some(src) = en.get(k) {
@@ -122,7 +122,7 @@ fn golden_dobie_dictionary_passes() {
     }
     assert!(
         failures.is_empty(),
-        "Dobie 번역에서 검증기 오탐 {}건:\n{}",
+        "구 패치 번역에서 검증기 오탐 {}건:\n{}",
         failures.len(),
         failures
             .iter()

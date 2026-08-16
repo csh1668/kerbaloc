@@ -4,7 +4,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 
 SD = os.path.dirname(os.path.abspath(__file__))
 STOCK = os.path.join(SD, 'stock-dictionary')
-DOBIE = r"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\GameData\Squad\Localization\dictionary.cfg"
+LEGACY = r"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\GameData\Squad\Localization\dictionary.cfg"
 
 KV = re.compile(r'^\s*(#autoLOC_\S+)\s*=\s*(.*?)\s*$')
 
@@ -21,13 +21,13 @@ def node_names(path):
     s = open(path, encoding='utf-8-sig', errors='replace').read(4000)
     return re.findall(r'^\s*([a-z]{2}(?:-[a-z]{2})?)\s*$', s, re.M)
 
-dob = parse(DOBIE)
+dob = parse(LEGACY)
 en  = parse(os.path.join(STOCK, 'en-us.cfg'))
 ja  = parse(os.path.join(STOCK, 'ja.cfg'))
 zh  = parse(os.path.join(STOCK, 'zh-cn.cfg'))
 
 print('nodes:', {p: node_names(os.path.join(STOCK, p + '.cfg')) for p in ('en-us','ja','zh-cn')})
-print('counts: dobie=%d en=%d ja=%d zh=%d' % (len(dob), len(en), len(ja), len(zh)))
+print('counts: legacy=%d en=%d ja=%d zh=%d' % (len(dob), len(en), len(ja), len(zh)))
 
 def ascii_only(v):
     return v != '' and all(0x20 <= ord(c) <= 0x7e for c in v)
@@ -35,13 +35,13 @@ def ascii_only(v):
 def norm(v):
     return re.sub(r'\s+', ' ', v).strip().lower()
 
-# a) Dobie keys kept in English (pure ASCII value)
-K_dobie = {k for k, v in dob.items() if ascii_only(v)}
+# a) legacy keys kept in English (pure ASCII value)
+K_legacy = {k for k, v in dob.items() if ascii_only(v)}
 # restrict to keys present in stock en-us AND in ja/zh (comparable universe)
 common = set(dob) & set(en) & set(ja) & set(zh)
-print('common keys (dobie n en n ja n zh): %d' % len(common))
-K = K_dobie & common
-print('|K_dobie| all = %d ; within common = %d' % (len(K_dobie), len(K)))
+print('common keys (legacy n en n ja n zh): %d' % len(common))
+K = K_legacy & common
+print('|K_legacy| all = %d ; within common = %d' % (len(K_legacy), len(K)))
 
 def kept_en(lang, k):
     """lang value counts as 'kept English' if pure ASCII and equal/similar to en-us."""
@@ -73,24 +73,24 @@ print('ja: %d  zh: %d  ja&zh: %d  ja|zh: %d' % (len(ja_keep_loose), len(zh_keep_
       len(ja_keep_loose & zh_keep_loose), len(ja_keep_loose | zh_keep_loose)))
 
 print()
-print('=== K_dobie coverage (strict) ===')
+print('=== K_legacy coverage (strict) ===')
 for name, S in (('ja', ja_keep), ('zh-cn', zh_keep), ('ja AND zh', ja_keep & zh_keep), ('ja OR zh', ja_keep | zh_keep)):
     inter = K & S
     print('%-10s kept too: %5d / %5d = %.1f%%' % (name, len(inter), len(K), pct(len(inter), len(K))))
 
 print()
-print('=== K_dobie coverage (loose ASCII) ===')
+print('=== K_legacy coverage (loose ASCII) ===')
 for name, S in (('ja', ja_keep_loose), ('zh-cn', zh_keep_loose),
                 ('ja AND zh', ja_keep_loose & zh_keep_loose), ('ja OR zh', ja_keep_loose | zh_keep_loose)):
     inter = K & S
     print('%-10s kept too: %5d / %5d = %.1f%%' % (name, len(inter), len(K), pct(len(inter), len(K))))
 
 print()
-print('=== reverse: lang kept English but Dobie translated ===')
-K_trans = common - K   # Dobie translated (non-ASCII value)
+print('=== reverse: lang kept English but legacy translated ===')
+K_trans = common - K   # legacy translated (non-ASCII value)
 for name, S in (('ja', ja_keep), ('zh-cn', zh_keep), ('ja AND zh', ja_keep & zh_keep), ('ja OR zh', ja_keep | zh_keep)):
     r = S & K_trans
-    print('%-10s kept but Dobie translated: %5d  (precision of mask = %.1f%%)' %
+    print('%-10s kept but legacy translated: %5d  (precision of mask = %.1f%%)' %
           (name, len(r), pct(len(S & K), len(S)) if S else 0))
 
 def sample(keys, n, label):
@@ -100,12 +100,12 @@ def sample(keys, n, label):
         print('%s\n   en: %s\n   ja: %s\n   zh: %s\n   ko: %s' %
               (k, en.get(k, '')[:110], ja.get(k, '')[:110], zh.get(k, '')[:110], dob.get(k, '')[:110]))
 
-sample(K - (ja_keep | zh_keep), 20, 'Dobie kept EN but BOTH ja & zh translated')
-sample((ja_keep & zh_keep) & K_trans, 20, 'ja & zh kept EN but Dobie translated')
+sample(K - (ja_keep | zh_keep), 20, 'legacy kept EN but BOTH ja & zh translated')
+sample((ja_keep & zh_keep) & K_trans, 20, 'ja & zh kept EN but legacy translated')
 
 # dump mask sets
 out = {
-    'K_dobie_common': sorted(K),
+    'K_legacy_common': sorted(K),
     'ja_keep': sorted(ja_keep),
     'zh_keep': sorted(zh_keep),
     'ja_and_zh': sorted(ja_keep & zh_keep),

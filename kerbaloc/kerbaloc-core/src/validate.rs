@@ -61,7 +61,7 @@ pub fn validate_translation(src: &str, dst: &str) -> Vec<Finding> {
     let ts = extract_tokens(src);
     let td = extract_tokens(dst);
     if ts != td {
-        // \n·\t는 장식용이라 개수 불일치가 게임을 깨지 않는다(Dobie 실측) → Warning.
+        // \n·\t는 장식용이라 개수 불일치가 게임을 깨지 않는다(구 패치 실측) → Warning.
         // 나머지 토큰은 엔진/소비 코드가 파싱하므로 Error.
         let cls = |t: &str| -> (&'static str, Severity) {
             if t.starts_with('^') {

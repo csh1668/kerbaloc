@@ -19,8 +19,8 @@ fn parses_basic_localization_block() {
 
 #[test]
 fn strips_inline_comment_after_node_name() {
-    // 실존 사례: Dobie dictionary.cfg의 "en-us// 주석"
-    let text = "Localization\n{\n\ten-us// Dobie 24.06.15\n\t{\n\t\t#a = b\n\t}\n}\n";
+    // 실존 사례: 구 커뮤니티 패치 dictionary.cfg의 "en-us// 주석"
+    let text = "Localization\n{\n\ten-us// legacy patch 24.06.15\n\t{\n\t\t#a = b\n\t}\n}\n";
     let root = parse(text).unwrap();
     assert_eq!(loc(&root).children[0].name, "en-us");
 }
