@@ -156,9 +156,9 @@ translation-db/
 - **용어집은 모드별 관리**: 코어 용어집 + 설치·번역 대상 모드의 용어집만 다운로드한다. 깔리지 않은 모드의 용어로 용어집이 불어나지 않는다. 팩 공유 시 용어집 변경분도 함께 PR.
 - **pack.json의 en-us 소스 해시**: 모드가 업데이트되어 번역이 낡았는지(키 추가/변경) 도구가 감지하는 근거. 스튜디오에서 변경된 키만 diff로 표시.
 - **변형 선택 기준(도구의 기본 추천 정렬)**: ① 소스 해시 일치 ② 검수됨 > 기계번역 ③ 커버리지 ④ 최신순. 사용자는 모드별로 다른 변형을 자유 선택.
-- **CI (GitHub Actions)**: PR 검증(cfg 파싱 가능, 포맷 토큰 보존, 블랙리스트 위반, 스키마 검사, 커버리지 계산) + 머지 시 index 재생성 + **팩별 zip을 롤링 GitHub Release에 게시** (GitHub는 레포 하위 폴더만 zip으로 받는 공식 방법이 없으므로 CI가 빌드).
-- **다운로드 흐름**: 도구가 index를 raw URL로 조회 → 설치된 모드와 매칭 → 팩 zip(Release 자산) 다운로드 → `GameData/KSP-Loc/<lang>/`에 설치. 계정/키 완전 불필요. raw 레이트리밋 대비 jsDelivr CDN 미러를 폴백으로 사용.
-- **업로드 흐름**: 스튜디오 "공유" 버튼 → Cloudflare Worker(무료 티어)에 팩 zip POST → Worker가 봇 계정 토큰(대상 레포 한정 fine-grained PAT)으로 브랜치 생성 + 자동 PR. 사용자는 닉네임만 입력. 스팸 방어: 레이트리밋 + 크기 제한 + PR 사람 검수 + CI 검증.
+- **CI (GitHub Actions)**: PR 검증 14단계(스키마, ConfigNode 라운드트립, 토큰 보존, 참조 규칙/블랙리스트, 커버리지 재계산·자동 정정, 팩 간 태그 충돌 등) + 머지 시 index 재생성 + **모드당 zip 1개를 불변 태그 릴리스 + 롤링 `db-latest`에 이중 게시** (GitHub는 하위 폴더 zip 공식 미지원). 상세: 부록 E.
+- **다운로드 흐름** (부록 E에서 확정 — 스펙 초안의 "raw 기본"을 반전): ① `releases/latest/download/manifest.json` 1회로 최신 커밋 SHA 발견(ETag 캐시) ② **jsDelivr `@<commitSha>` 핀**으로 인덱스·팩 파일 개별 fetch(불변 URL이라 캐시 지연 없음, 레이트리밋 없음) ③ 폴백: Release zip → raw@sha(최후). 근거: raw.githubusercontent는 2025-05부터 **비인증 60요청/시/IP** — 설치 시나리오를 감당 불가. 모든 응답은 인덱스의 sha256으로 검증, 로컬 내용 주소 캐시 사용. 계정/키 완전 불필요.
+- **업로드 흐름** (부록 C에서 확정): 스튜디오 "공유" → Cloudflare Worker에 [메타 JSON → base64 zip 스트리밍 → finalize] 3단계 POST → Worker가 봇 자격증명으로 same-repo 브랜치 + 자동 PR. 사용자는 닉네임만 입력. 핵심 결정: ① 봇 자격증명은 **GitHub App 권장**(설치 토큰 1시간 자동 만료 — fine-grained PAT는 "타인 개인 레포 협업자" 미지원이라 조직 레포 필수) ② Worker는 CPU 10ms 제약상 **팩을 파싱하지 않고**(스트리밍 패스스루) 내용 검증은 전부 CI ③ 레이트리밋·중복탐지는 Durable Objects(SQLite, 무료), 전역 30/시간은 GitHub 2차 제한 500/시 역산 ④ 봇 억제는 Proof-of-Work 기본 + Turnstile 비상 스위치 ⑤ PR 본문 인젝션 새니타이즈, MM 패치 연산자 화이트리스트 ⑥ 장애 시 다운로드 무영향 + issue-ops 수동 폴백 병행.
 
 ## 모드 식별과 버전 파악 (피드백 3)
 
@@ -274,11 +274,28 @@ translation-db/
 - **인코딩**: cfg는 UTF-8(BOM 유무) 처리 일관성 필요. 게임의 cfg 리더는 UTF-8 BOM을 허용하는 것으로 보이나(기존 패치 동작 중) 팩 생성 시 BOM 없는 UTF-8로 통일.
 - **용어집 표류**: 팩마다 용어가 달라지는 문제 — CI가 용어집 위반을 경고(차단은 안 함).
 
-## 미확정 항목 (구현 계획에서 확정)
-- ModId 정규화 규칙 상세
-- 업로드 프록시의 레이트리밋 세부 정책
-- LLM 공급자/모델 선택
-- 도구/DB 레포 최종 명칭
-- variantId 명명 규칙 상세 (날짜-방식-기여자 조합안 유력)
+## 부록 (상세 설계 — Opus 서브에이전트 보고서, `appendix/` 하위)
+
+- **A. 마스크 가설 검증** — 스톡 원본 대조 정량 분석, 가설 기각 근거 수치
+- **B. LLM 번역 파이프라인** — 모델 선택(Gemini 3.1 Flash-Lite 기본 + 3 Flash 에스컬레이션), Provider 프로토콜, 배치/병렬/재개, 프롬프트 3층 설계, 11종 검증 루프, 용어집 초안 생성, 비용 산정(Squad ~$1.4, 전체 ~$10), 기존 코드 버그 7건
+- **C. 익명 업로드 프록시** — Worker 무파싱 원칙, GitHub App 권장, Durable Objects 레이트리밋, PoW, PR 인젝션 방어, 열화 모드, 비용 0원 조건
+- **D. ModId 정규화 + 버전 파악** — CKAN `installed_files` 역인덱스 1차, `local.` 접두, 관대 .version 파서(실측 6% 엄격 실패), 소스 해시 정규화(v1 알고리즘 버전 접두), 엣지 케이스 30건
+- **E. DB 스키마 · variantId · CI · 배포 경로 · 명칭** — 전체 JSON 스키마, variantId 규칙(불투명 ID), CI 14단계 + publish/nightly, jsDelivr@SHA 기본 경로, 명칭 후보
+
+## 확정된 항목 (부록에서 상세 확정 — 요지)
+
+- **ModId**: CKAN `installed_files` 역인덱스 identifier(verbatim) → 예약 스톡 ID(`Squad`/`MakingHistory-DLC`/`BreakingGround-DLC`) → `local.<AVC GitHub repo>` → `local.<AVC stem>` → `local.<slug(폴더명)>`. **번역 단위는 폴더가 아니라 "로컬라이제이션 소스 파일의 소유 패키지"**. 로컬라이제이션 탐지는 파일명이 아닌 ConfigNode 파싱 기반(실측: 152개 중 60개+ 비표준 명명).
+- **버전**: 식별 축은 CKAN → .version → 폴더 순, 낡음 판정 축은 오직 소스 해시(fresh/values-changed/stale 3상태). 출처·신뢰도 배지 병기. `.version` 관대 파서 필수.
+- **소스 해시**: 바이트가 아닌 파싱된 (키,값) 정규화 집합의 sha256, `v1:` 알고리즘 버전 접두. `hash`/`keys_hash`/`mask_hash` 3종 + 키별 8-hex 지문.
+- **variantId**: `YYYY-MM-DD-<method>-<nick>[-N]`, `[a-z0-9-]`, 불투명 ID(도구는 파싱 금지, 정본은 pack.json). 머지 후 영구 불변, 수정은 새 변형 + `deprecatedBy`.
+- **LLM**: 기본 Gemini 3.1 Flash-Lite, 검증 실패 에스컬레이션 Gemini 3 Flash. Provider 프로토콜만 정의하고 v1은 Gemini 구현. 구조화 출력 강제, 인덱스 매칭, 병렬 8 + AIMD, 잡 단위 JSONL 재개, 키당 최대 3회 시도 후 검수 큐(영어 폴백이 안전 기본값), 서킷 브레이커(ERROR 30%).
+- **프록시**: GitHub App(권장) / Worker 무파싱 / DO 레이트리밋 / PoW / issue-ops 폴백 병행.
+- **레이트리밋 세부**: IP 3/시·10/일, 전역 30/시·200/일(GitHub 2차 제한 역산) 등 부록 C 확정값.
+
+## 미확정 항목 (사용자 결정 대기)
+
+- **명칭**: 부록 E 권고 1위 `KerbaLoc`(도구 `kerbaloc`, 폴더 `GameData/KerbaLoc`, DB `kerbaloc-db`), 차선 `LocKAN`
+- **봇 자격증명**: GitHub App(권장) vs 조직 fine-grained PAT — App 채택 여부
 - Dobie 번역의 Squad 초기 변형 시드 재활용 — 원작자 허락/크레딧 협의 필요
-- ja 영어 유지 키 199개의 검토 큐 분류(자동 유지 vs 한국어화) 세부 목록 — 데이터는 확보됨(scratchpad `mask_sets.json`), 구현 시 확정
+- ja 영어 유지 키 199개의 검토 큐 분류(자동 유지 vs 한국어화) 세부 목록 — 데이터 확보됨, 구현 시 확정
+- MM 패치 `:AFTER[<대상모드>]` vs `:FINAL` 정책 — 실게임 스파이크에서 검증
