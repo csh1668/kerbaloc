@@ -1,10 +1,10 @@
-//! 프리즈 재현 실험용 팩 생성기.
+﻿//! 嵓・ｦｬ・・・ｬ嶸・・､嵭們圸 甯ｩ ・晧┳・ｰ.
 //!
-//! 사용: cargo run -p kerbaloc-core --example gen_test_packs -- <소스cfg> <출력디렉터리> <ModId> <good|bad>
+//! ・ｬ・ｩ: cargo run -p kerbaloc-core --example gen_test_packs -- <・護侃cfg> <・罹･・罷駕┣・ｬ> <ModId> <good|bad>
 //!
-//! - good: 의사번역(pseudo-loc) — 모든 값 앞에 "한" 접두, 토큰 완전 보존 → 검증기 통과
-//! - bad : 구방식 손상 시뮬레이션 — 의사번역 + 첫 Lingoona 토큰의 닫는 '>' 절단(3키마다),
-//!         값에 원시 중괄호 주입(50키마다) → 검증기가 거부해야 정상
+//! - good: ・們ぎ・溢溜(pseudo-loc) 窶・・ｨ・ ・・・樌乱 "﨑・ ・瀧草, 奝增ｰ ・・・・ｴ・ｴ 竊・・・晝ｸｰ 奝ｵ・ｼ
+//! - bad : ・ｬ・ｩ・・・川メ ・罹ｮｬ・溢擽・・窶・・們ぎ・溢溜 + ・ｫ Lingoona 奝增ｰ・・・ｫ・・'>' ・壱卿(3墲､・壱共),
+//!         ・廷乱 ・川亨 ・滝ｴ・从 ・ｼ・・50墲､・壱共) 竊・・・晝ｸｰ・ ・ｰ・﨑ｴ・ｼ ・菩メ
 
 use kerbaloc_core::{cfg, loc};
 use std::fmt::Write as _;
@@ -12,14 +12,14 @@ use std::fmt::Write as _;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 5 {
-        eprintln!("사용: gen_test_packs <소스cfg> <출력디렉터리> <ModId> <good|bad>");
+        eprintln!("・ｬ・ｩ: gen_test_packs <・護侃cfg> <・罹･・罷駕┣・ｬ> <ModId> <good|bad>");
         std::process::exit(2);
     }
     let (src_path, out_dir, mod_id, mode) = (&args[1], &args[2], &args[3], &args[4]);
-    let text = std::fs::read_to_string(src_path).expect("소스 읽기 실패");
-    let root = cfg::parse(&text).expect("소스 파싱 실패");
+    let text = std::fs::read_to_string(src_path).expect("・護侃 ・ｽ・ｰ ・､甯ｨ");
+    let root = cfg::parse(&text).expect("・護侃 甯護恭 ・､甯ｨ");
     let entries = loc::extract_localization(&root, "en-us");
-    assert!(!entries.is_empty(), "en-us 노드 없음");
+    assert!(!entries.is_empty(), "en-us ・ｸ・・・・搆");
 
     let mut body = String::new();
     let mut n = 0usize;
@@ -27,18 +27,18 @@ fn main() {
     for (k, v) in &entries {
         n += 1;
         if v.trim().is_empty() || v.contains("//") || k.contains('/') {
-            continue; // 빈 값·주석 절단 위험·중첩 키는 건너뜀 (영어 폴백)
+            continue; // ・・・陳ｷ・ｼ・・・壱卿 ・・利ﾂｷ・卓ｲｩ 墲､・・・ｴ・壱怙 (・・牟 尞ｴ・ｱ)
         }
-        let mut val = format!("한{v}");
+        let mut val = format!("﨑悳v}");
         if mode == "bad" {
-            if n % 3 == 0 {
-                // Lingoona 토큰 손상: 첫 "<<x>>"의 마지막 '>' 절단
+            if n.is_multiple_of(3) {
+                // Lingoona 奝增ｰ ・川メ: ・ｫ "<<x>>"・・・溢ｧ・・'>' ・壱卿
                 if let Some(i) = val.find(">>") {
                     val.replace_range(i..i + 2, ">");
                 }
             }
-            if n % 50 == 0 {
-                val = format!("{{{val}}}"); // 원시 중괄호 주입 → cfg 구조 파괴
+            if n.is_multiple_of(50) {
+                val = format!("{{{val}}}"); // ・川亨 ・滝ｴ・从 ・ｼ・・竊・cfg ・ｬ・ｰ 甯語ｴｴ
             }
         }
         writeln!(body, "\t\t{k} = {val}").unwrap();
@@ -64,7 +64,7 @@ fn main() {
     );
     std::fs::write(out.join("pack.json"), meta).unwrap();
     println!(
-        "{mod_id} {mode}: {translated}/{} 키 생성 → {}",
+        "{mod_id} {mode}: {translated}/{} 墲､ ・晧┳ 竊・{}",
         entries.len(),
         out.display()
     );
