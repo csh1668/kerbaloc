@@ -20,6 +20,9 @@ KSP(Kerbal Space Program) 1.12.x 한국어화 도구 모음.
     kerbaloc validate <팩 디렉터리>     # 팩 검증 (CI에서도 동일 사용)
     kerbaloc translate <ModId> [--nick 이름] [--install] [--resume]
                                  # Gemini 번역 → 검증 루프 → 팩 생성 (GEMINI_API_KEY 필요)
+    kerbaloc db list             # 원격 번역 DB 팩 목록 (계정 불필요)
+    kerbaloc db install <ModId>  # DB에서 다운로드·해시 검증·원문 대조·설치
+    kerbaloc db validate|index <레포경로>   # kerbaloc-db CI가 사용하는 서브커맨드
 
 ## 개발
 
@@ -35,7 +38,7 @@ KSP(Kerbal Space Program) 1.12.x 한국어화 도구 모음.
 | Plan | 내용 | 상태 |
 |---|---|---|
 | 1 | kerbaloc-core + CLI (파서/해시/검증/스캔/설치/언어 전환) | ✅ 완료 |
-| 2 | 번역 DB 레포(kerbaloc-db) + CI | 예정 (GitHub 조직 필요) |
+| 2 | 번역 DB 레포([kerbaloc-db](https://github.com/csh1668/kerbaloc-db)) + CI + 다운로드 클라이언트 | ✅ 완료 (manifest→jsDelivr@SHA→검증 설치 E2E) |
 | 3 | LLM 번역 파이프라인 + 팩 생성 | ✅ 완료 (CRP 240키 E2E: $0.0093, 검수 0) |
 | 4 | Tauri 스튜디오 (대시보드/에디터/공유) | 예정 |
 | 5 | 익명 업로드 프록시 (Cloudflare Worker) | 예정 |
