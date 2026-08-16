@@ -64,13 +64,19 @@ fn normalize(raw: &str) -> String {
 
 pub fn parse_version_file(text: &str) -> Option<AvcInfo> {
     let v = lenient_json(text)?;
-    let name = get_ci(&v, "NAME").and_then(|x| x.as_str()).map(String::from);
+    let name = get_ci(&v, "NAME")
+        .and_then(|x| x.as_str())
+        .map(String::from);
     let version_raw = match get_ci(&v, "VERSION") {
         Some(Value::String(s)) => Some(s.clone()),
         Some(obj @ Value::Object(_)) => {
             let parts: Vec<String> = ["MAJOR", "MINOR", "PATCH", "BUILD"]
                 .iter()
-                .map_while(|k| get_ci(obj, k).and_then(|x| x.as_i64()).map(|n| n.to_string()))
+                .map_while(|k| {
+                    get_ci(obj, k)
+                        .and_then(|x| x.as_i64())
+                        .map(|n| n.to_string())
+                })
                 .collect();
             if parts.is_empty() {
                 None

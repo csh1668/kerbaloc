@@ -5,14 +5,14 @@ fn patterns() -> &'static Vec<Regex> {
     static P: OnceLock<Vec<Regex>> = OnceLock::new();
     P.get_or_init(|| {
         [
-            r"<<[^<>]+>>",                             // Lingoona 치환/문법 토큰
-            r"\^[A-Za-z]",                             // 성별/문법 마커
-            r"\\n|\\t",                                // 리터럴 개행/탭
-            r"｢|｣",                                   // 이스케이프 중괄호
+            r"<<[^<>]+>>", // Lingoona 치환/문법 토큰
+            r"\^[A-Za-z]", // 성별/문법 마커
+            r"\\n|\\t",    // 리터럴 개행/탭
+            r"｢|｣",        // 이스케이프 중괄호
             // TMP 리치텍스트. b/i/u는 단어 경계 필수 — <br>은 별개의 줄바꿈 태그라 제외
             r"</?(?:b|i|u)>|</?(?:color|size|sprite)[^<>]*>",
-            r"#(?:autoLOC|LOC)_[A-Za-z0-9_]+",         // 태그 참조
-            r"\{\d+\}|%(?:\.\d+)?[sdf]",               // 서식 자리표시자
+            r"#(?:autoLOC|LOC)_[A-Za-z0-9_]+", // 태그 참조
+            r"\{\d+\}|%(?:\.\d+)?[sdf]",       // 서식 자리표시자
         ]
         .iter()
         .map(|p| Regex::new(p).unwrap())

@@ -20,7 +20,7 @@ pub fn detect_pollution(ksp_root: &Path) -> Vec<Pollution> {
     let mut out = vec![];
     for e in WalkDir::new(&gamedata).into_iter().filter_map(Result::ok) {
         let p = e.path();
-        if !p.extension().is_some_and(|x| x == "cfg") {
+        if p.extension().is_none_or(|x| x != "cfg") {
             continue;
         }
         let rel = p

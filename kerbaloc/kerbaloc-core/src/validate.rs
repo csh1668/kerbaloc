@@ -14,7 +14,11 @@ pub struct Finding {
 }
 
 fn find(rule: &'static str, severity: Severity, message: String) -> Finding {
-    Finding { rule, severity, message }
+    Finding {
+        rule,
+        severity,
+        message,
+    }
 }
 
 fn has_hangul(s: &str) -> bool {

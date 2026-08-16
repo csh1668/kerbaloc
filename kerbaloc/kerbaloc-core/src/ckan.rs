@@ -41,7 +41,11 @@ impl CkanRegistry {
                 let locs = sm
                     .and_then(|s| s.get("localizations"))
                     .and_then(|x| x.as_array())
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 modules.insert(
                     ident.clone(),

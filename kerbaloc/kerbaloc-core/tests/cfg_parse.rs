@@ -44,7 +44,10 @@ fn inline_open_brace_on_name_line() {
 fn value_may_contain_equals() {
     let text = "N\n{\n\tk = a = b\n}\n";
     let root = parse(text).unwrap();
-    assert_eq!(root.children[0].values[0], ("k".to_string(), "a = b".to_string()));
+    assert_eq!(
+        root.children[0].values[0],
+        ("k".to_string(), "a = b".to_string())
+    );
 }
 
 #[test]

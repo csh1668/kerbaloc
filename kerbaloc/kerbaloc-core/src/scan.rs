@@ -63,7 +63,7 @@ struct Owner {
 fn find_avc(top_dir: &Path, file: &Path) -> Option<avc::AvcInfo> {
     let mut best: Option<(avc::AvcInfo, bool, i64)> = None; // (info, is_ancestor, score)
     for e in WalkDir::new(top_dir).into_iter().filter_map(Result::ok) {
-        if !e.path().extension().is_some_and(|x| x == "version") {
+        if e.path().extension().is_none_or(|x| x != "version") {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(e.path()) else {
@@ -121,7 +121,10 @@ fn resolve_owner(ksp_root: &Path, file: &Path, ckan: Option<&CkanRegistry>) -> O
             key: "Squad".into(),
             id_source: IdSource::Stock,
             display: "Kerbal Space Program (스톡)".into(),
-            version: VersionInfo { raw: None, source: "unknown" },
+            version: VersionInfo {
+                raw: None,
+                source: "unknown",
+            },
         };
     }
     if top == "SquadExpansion" {
@@ -134,7 +137,10 @@ fn resolve_owner(ksp_root: &Path, file: &Path, ckan: Option<&CkanRegistry>) -> O
             key: id.into(),
             id_source: IdSource::Stock,
             display: id.into(),
-            version: VersionInfo { raw: None, source: "unknown" },
+            version: VersionInfo {
+                raw: None,
+                source: "unknown",
+            },
         };
     }
     let top_dir = ksp_root.join("GameData").join(&top);
@@ -166,7 +172,10 @@ fn resolve_owner(ksp_root: &Path, file: &Path, ckan: Option<&CkanRegistry>) -> O
         key: format!("local.{}", slug(&top)),
         id_source: IdSource::Folder,
         display: top.clone(),
-        version: VersionInfo { raw: None, source: "unknown" },
+        version: VersionInfo {
+            raw: None,
+            source: "unknown",
+        },
     }
 }
 
@@ -178,7 +187,7 @@ pub fn scan_gamedata(ksp_root: &Path) -> Vec<ModUnit> {
 
     for e in WalkDir::new(&gamedata).into_iter().filter_map(Result::ok) {
         let p = e.path();
-        if !p.extension().is_some_and(|x| x == "cfg") {
+        if p.extension().is_none_or(|x| x != "cfg") {
             continue;
         }
         let rel = p

@@ -15,7 +15,10 @@ fn ok_translation_has_no_errors() {
 
 #[test]
 fn missing_substitution_token() {
-    assert_eq!(errors("Stage <<1>> of <<2>>", "<<1>>단"), vec!["token-mismatch"]);
+    assert_eq!(
+        errors("Stage <<1>> of <<2>>", "<<1>>단"),
+        vec!["token-mismatch"]
+    );
 }
 
 #[test]
@@ -39,7 +42,10 @@ fn escaped_braces_ok_but_must_match() {
 fn literal_newline_count_is_warning() {
     // \n은 장식용 — 게임을 깨지 않으므로 Warning (Dobie 실측 225건 근거)
     let findings = validate_translation("a\\nb", "가나");
-    let f = findings.iter().find(|f| f.rule == "newline-mismatch").unwrap();
+    let f = findings
+        .iter()
+        .find(|f| f.rule == "newline-mismatch")
+        .unwrap();
     assert!(matches!(f.severity, Severity::Warning));
     assert!(errors("a\\nb", "가나").is_empty());
 }
@@ -60,7 +66,9 @@ fn comment_in_value_is_error() {
 #[test]
 fn richtext_tags_must_balance() {
     assert!(errors("<b>Hi</b>", "<b>안녕</b>").is_empty());
-    assert!(errors("<b>Hi</b>", "<b>안녕").iter().any(|r| r == "richtext-mismatch"));
+    assert!(errors("<b>Hi</b>", "<b>안녕")
+        .iter()
+        .any(|r| r == "richtext-mismatch"));
 }
 
 #[test]
@@ -83,9 +91,9 @@ fn golden_dobie_dictionary_passes() {
     };
     let en = extract_localization(&parse(&stock).unwrap(), "en-us");
     let ko = extract_localization(&parse(&dobie).unwrap(), "en-us"); // Dobie는 en-us 노드에 한국어
-    // 검증기가 잡아낸 Dobie 번역의 실제 결함 (2026-08-16 전수 확인):
-    // 토큰 오타(<<2>]), 토큰 누락/오용, 선택 토큰 닫힘 누락(<<1[자동/수동>>),
-    // richtext 태그 누락, 키 밀림 등. 검증기의 정탐이므로 골든에서 제외한다.
+                                                                     // 검증기가 잡아낸 Dobie 번역의 실제 결함 (2026-08-16 전수 확인):
+                                                                     // 토큰 오타(<<2>]), 토큰 누락/오용, 선택 토큰 닫힘 누락(<<1[자동/수동>>),
+                                                                     // richtext 태그 누락, 키 밀림 등. 검증기의 정탐이므로 골든에서 제외한다.
     const KNOWN_DOBIE_DEFECTS: &[&str] = &[
         "#autoLOC_250813",
         "#autoLOC_284439",
@@ -116,6 +124,11 @@ fn golden_dobie_dictionary_passes() {
         failures.is_empty(),
         "Dobie 번역에서 검증기 오탐 {}건:\n{}",
         failures.len(),
-        failures.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+        failures
+            .iter()
+            .take(20)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }

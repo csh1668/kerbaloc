@@ -81,7 +81,7 @@ fn main() {
         }
         Cmd::Scan => {
             let units = scan::scan_gamedata(&root);
-            println!("{:<44} {:<12} {:>6}  {}", "ModId", "버전", "키수", "해시");
+            println!("{:<44} {:<12} {:>6}  해시", "ModId", "버전", "키수");
             for u in &units {
                 println!(
                     "{:<44} {:<12} {:>6}  {}",
@@ -106,7 +106,10 @@ fn main() {
                         it.total
                     );
                 }
-                println!("총 {}개 파일이 구방식 번역으로 오염되어 있습니다.", items.len());
+                println!(
+                    "총 {}개 파일이 구방식 번역으로 오염되어 있습니다.",
+                    items.len()
+                );
                 if let Some(zip) = backup {
                     let n = kerbaloc_core::doctor::backup_polluted(&root, &zip, &items)
                         .expect("백업 실패");

@@ -62,7 +62,9 @@ pub fn validate_pack(
     };
     match cfg::roundtrip_ok(&text) {
         Ok(true) => {}
-        _ => r.errors.push("라운드트립 불일치 — 구조 문자 손상 의심".into()),
+        _ => r
+            .errors
+            .push("라운드트립 불일치 — 구조 문자 손상 의심".into()),
     }
     fn langs_in(n: &cfg::Node, out: &mut Vec<String>) {
         if n.name == "Localization" {
@@ -78,8 +80,10 @@ pub fn validate_pack(
     langs_in(&root, &mut langs);
     for l in &langs {
         if l != &meta.lang {
-            r.errors
-                .push(format!("{l} 노드 포함 — 팩은 {} 노드만 가질 수 있음", meta.lang));
+            r.errors.push(format!(
+                "{l} 노드 포함 — 팩은 {} 노드만 가질 수 있음",
+                meta.lang
+            ));
         }
     }
     let entries = loc::extract_localization(&root, &meta.lang);
@@ -131,9 +135,8 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// GameData/KerbaLoc/<lang>/<ModId>/ 로 복사. 기존 설치는 교체.
 pub fn install_pack(ksp_root: &Path, dir: &Path) -> std::io::Result<PathBuf> {
-    let meta: PackMeta =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("pack.json"))?)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let meta: PackMeta = serde_json::from_str(&std::fs::read_to_string(dir.join("pack.json"))?)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let dest = ksp_root
         .join("GameData")
         .join("KerbaLoc")

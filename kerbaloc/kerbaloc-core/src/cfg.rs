@@ -35,7 +35,7 @@ pub fn parse(text: &str) -> Result<Node, CfgError> {
             let eq = rest.find('=');
             let brace = rest.find(['{', '}']);
             if let Some(e) = eq {
-                if brace.map_or(true, |b| e < b) {
+                if brace.is_none_or(|b| e < b) {
                     // 값 줄: 첫 '=' 기준 분리. 중괄호는 값 안에서도 구조 문자이므로
                     // 값은 다음 중괄호 직전까지만 취하고 나머지는 계속 처리한다.
                     let name = rest[..e].trim().to_string();
