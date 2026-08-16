@@ -1,4 +1,4 @@
-use crate::validate::{validate_translation, Severity};
+use crate::validate::{validate_key_translation, Severity};
 use crate::{cfg, loc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -116,14 +116,7 @@ pub fn validate_pack(
                     if s != dst {
                         translated += 1;
                     }
-                    // PartResourceDefinition.GetShortName() = displayName.Substring(0, 2)
-                    // → 2자 미만 DisplayName은 로딩 프리즈 (실게임 재현으로 확정)
-                    if k.to_lowercase().contains("_displayname") && dst.chars().count() < 2 {
-                        r.errors.push(format!(
-                            "{k}: [displayname-too-short] 2자 미만 DisplayName — GetShortName Substring 예외로 로딩 프리즈"
-                        ));
-                    }
-                    for f in validate_translation(s, dst) {
+                    for f in validate_key_translation(k, s, dst) {
                         let msg = format!("{k}: [{}] {}", f.rule, f.message);
                         match f.severity {
                             Severity::Error => r.errors.push(msg),

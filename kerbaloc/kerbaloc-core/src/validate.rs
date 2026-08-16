@@ -25,6 +25,19 @@ fn has_hangul(s: &str) -> bool {
     s.chars().any(|c| ('\u{ac00}'..='\u{d7a3}').contains(&c))
 }
 
+/// 키 컨텍스트 포함 검증: validate_translation + DisplayName 2자 규칙 (부록 G).
+pub fn validate_key_translation(key: &str, src: &str, dst: &str) -> Vec<Finding> {
+    let mut out = validate_translation(src, dst);
+    if key.to_lowercase().contains("_displayname") && dst.chars().count() < 2 {
+        out.push(find(
+            "displayname-too-short",
+            Severity::Error,
+            "2자 미만 DisplayName — GetShortName Substring 예외로 로딩 프리즈".into(),
+        ));
+    }
+    out
+}
+
 pub fn validate_translation(src: &str, dst: &str) -> Vec<Finding> {
     let mut out = vec![];
     if dst.trim().is_empty() {
