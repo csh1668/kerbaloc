@@ -10,6 +10,7 @@ pub mod llm;
 pub mod hash;
 pub mod loc;
 pub mod pack;
+pub mod packgen;
 pub mod pipeline;
 pub mod prompt;
 pub mod scan;
