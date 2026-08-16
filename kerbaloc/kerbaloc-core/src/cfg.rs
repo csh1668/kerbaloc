@@ -78,3 +78,32 @@ pub fn parse(text: &str) -> Result<Node, CfgError> {
     }
     Ok(nodes.pop().unwrap())
 }
+
+fn write_node(out: &mut String, node: &Node, depth: usize) {
+    let tab = "\t".repeat(depth);
+    out.push_str(&format!("{tab}{}\n{tab}{{\n", node.name));
+    for (k, v) in &node.values {
+        out.push_str(&format!("{tab}\t{k} = {v}\n"));
+    }
+    for c in &node.children {
+        write_node(out, c, depth + 1);
+    }
+    out.push_str(&format!("{tab}}}\n"));
+}
+
+pub fn serialize(root: &Node) -> String {
+    let mut out = String::new();
+    for (k, v) in &root.values {
+        out.push_str(&format!("{k} = {v}\n"));
+    }
+    for c in &root.children {
+        write_node(&mut out, c, 0);
+    }
+    out
+}
+
+pub fn roundtrip_ok(text: &str) -> Result<bool, CfgError> {
+    let a = parse(text)?;
+    let b = parse(&serialize(&a))?;
+    Ok(a == b)
+}
