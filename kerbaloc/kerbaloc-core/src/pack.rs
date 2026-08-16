@@ -53,6 +53,23 @@ pub fn validate_pack(
         r.errors.push("BOM 있는 UTF-8 — 팩 파일은 BOM 없이".into());
     }
     let text = String::from_utf8_lossy(&bytes);
+    // 파싱 전 원문 줄 검사: 값 자리의 원시 중괄호는 파싱 시 구조 문자로 흡수되어
+    // 사라지므로(게임의 ConfigNode 리더도 동일) 여기서만 잡을 수 있다.
+    for (i, line) in text.lines().enumerate() {
+        let stripped = match line.find("//") {
+            Some(c) => &line[..c],
+            None => line,
+        };
+        if let Some((k, v)) = stripped.split_once('=') {
+            if !k.trim().is_empty() && (v.contains('{') || v.contains('}')) {
+                r.errors.push(format!(
+                    "{}행 {}: 값에 원시 중괄호 — ｢｣로 이스케이프 필요",
+                    i + 1,
+                    k.trim()
+                ));
+            }
+        }
+    }
     let root = match cfg::parse(&text) {
         Ok(x) => x,
         Err(e) => {

@@ -49,6 +49,23 @@ fn bom_is_error() {
 }
 
 #[test]
+fn raw_brace_in_value_line_is_error_before_parsing() {
+    // 값의 원시 중괄호는 파싱 시 구조로 흡수되어 사라지므로(게임도 동일하게 오파싱),
+    // 파싱 전 원문 줄 검사로 잡아야 한다.
+    let d = tempfile::tempdir().unwrap();
+    make_pack(
+        d.path(),
+        "Localization\n{\n\tko\n\t{\n\t\t#a = {안녕}\n\t}\n}\n",
+    );
+    let r = validate_pack(d.path(), None);
+    assert!(
+        r.errors.iter().any(|e| e.contains("중괄호")),
+        "{:?}",
+        r.errors
+    );
+}
+
+#[test]
 fn token_check_against_source() {
     use std::collections::BTreeMap;
     let d = tempfile::tempdir().unwrap();

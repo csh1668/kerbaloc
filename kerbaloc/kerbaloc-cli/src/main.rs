@@ -60,6 +60,25 @@ fn resolve_root(cli_root: Option<PathBuf>) -> PathBuf {
     }
 }
 
+/// 팩의 mod_id에 해당하는 설치 모드의 en-us 원문을 스캔으로 찾는다.
+/// 있으면 토큰 보존 검사까지 수행되고, 없으면 구조 검사만 한다.
+fn source_entries_for(
+    root: &std::path::Path,
+    pack_dir: &std::path::Path,
+) -> Option<std::collections::BTreeMap<String, String>> {
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(pack_dir.join("pack.json")).ok()?).ok()?;
+    let mod_id = meta.get("mod_id")?.as_str()?.to_string();
+    let units = scan::scan_gamedata(root);
+    match units.into_iter().find(|u| u.mod_id == mod_id) {
+        Some(u) => Some(u.entries),
+        None => {
+            eprintln!("주의: 설치본에서 {mod_id} 원문을 찾지 못해 토큰 검사를 생략합니다.");
+            None
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     let root = resolve_root(cli.root);
@@ -119,7 +138,8 @@ fn main() {
             }
         }
         Cmd::Validate { dir } => {
-            let r = kerbaloc_core::pack::validate_pack(&dir, None);
+            let src = source_entries_for(&root, &dir);
+            let r = kerbaloc_core::pack::validate_pack(&dir, src.as_ref());
             for w in &r.warnings {
                 println!("경고: {w}");
             }
@@ -133,7 +153,8 @@ fn main() {
             }
         }
         Cmd::Install { dir } => {
-            let r = kerbaloc_core::pack::validate_pack(&dir, None);
+            let src = source_entries_for(&root, &dir);
+            let r = kerbaloc_core::pack::validate_pack(&dir, src.as_ref());
             if !r.errors.is_empty() {
                 for e in &r.errors {
                     eprintln!("오류: {e}");
