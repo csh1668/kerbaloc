@@ -97,12 +97,14 @@
 | 업로드 | 익명 업로드 프록시 (Cloudflare Worker + 봇 PR) — 사용자 API 키/계정 등록 절대 불필요 |
 | 다운로드 | GitHub raw/zip — 키/계정 불필요 |
 | 다국어 | 구조는 다국어 지원, 1차 지원·도구 UI는 한국어만 (피드백 1) |
+| 명칭 | KerbaLoc (도구 `kerbaloc` / 폴더 `GameData/KerbaLoc` / DB `kerbaloc-db`) |
+| 봇 자격증명 | 조직 레포 + fine-grained PAT (부록 C의 경로 a — GitHub App은 추후 전환 여지) |
 
 ## 전체 구조
 
 ```
 ┌─────────────┐   raw URL (키 불필요)   ┌──────────────────┐
-│ 번역 DB      │ ◄──────────────────── │ ksp-loc 도구      │
+│ 번역 DB      │ ◄──────────────────── │ KerbaLoc 도구      │
 │ (GitHub 레포)│                        │  CLI + 스튜디오    │
 └─────▲───────┘                        │  (로컬 웹앱)       │
       │ 자동 PR                        └────────┬─────────┘
@@ -110,21 +112,21 @@
 │ 업로드 프록시 │ ◄──────────────────────┐      ▼
 │ (CF Worker)  │                        ┌──────────────────┐
 └─────────────┘                        │ KSP GameData      │
-                                       │  /KSP-Loc/<lang>/ │
+                                       │  /KerbaLoc/<lang>/ │
                                        └──────────────────┘
 ```
 
-구성요소 4개: ① 번역 DB(GitHub 레포) ② 업로드 프록시(Cloudflare Worker) ③ ksp-loc 도구(CLI + 로컬 웹 스튜디오) ④ 게임 적용 레이어(GameData/KSP-Loc).
+구성요소 4개: ① 번역 DB(GitHub 레포) ② 업로드 프록시(Cloudflare Worker) ③ KerbaLoc 도구(CLI + 로컬 웹 스튜디오) ④ 게임 적용 레이어(GameData/KerbaLoc).
 
-명명: 언어 중립적으로 `KSP-Loc`(폴더)/`ksp-loc`(도구)를 사용한다 (피드백 1). 최종 명칭은 구현 시 확정.
+명칭 (2026-08-16 사용자 확정): **KerbaLoc** — 도구 CLI `kerbaloc`, GameData 폴더 `KerbaLoc`, DB 레포 `kerbaloc-db`, 프록시 `kerbaloc-proxy`.
 
 ## 게임 적용 방식 — 핵심 원칙: 원본 무수정
 
-- **언어 전환**: `ksp-loc enable [--lang ko]` → `buildID64.txt`의 `language = en-us`를 `ko`로 변경. `disable`로 복원. Steam 무결성 검사·게임 업데이트로 파일이 리셋될 수 있으므로 도구가 상태를 감지하고 재적용한다.
-- **번역 설치**: 모든 번역팩은 `GameData/KSP-Loc/<lang>/<ModId>/` 아래에만 복사한다. 모드 원본 파일은 절대 수정하지 않는다. → 백업 문제, 모드 업데이트 유실, 중복 번역이 구조적으로 소멸. 제거는 폴더 삭제.
+- **언어 전환**: `kerbaloc enable [--lang ko]` → `buildID64.txt`의 `language = en-us`를 `ko`로 변경. `disable`로 복원. Steam 무결성 검사·게임 업데이트로 파일이 리셋될 수 있으므로 도구가 상태를 감지하고 재적용한다.
+- **번역 설치**: 모든 번역팩은 `GameData/KerbaLoc/<lang>/<ModId>/` 아래에만 복사한다. 모드 원본 파일은 절대 수정하지 않는다. → 백업 문제, 모드 업데이트 유실, 중복 번역이 구조적으로 소멸. 제거는 폴더 삭제.
 - **번역팩 내용물 두 종류**:
   1. **태그형** (`#autoLOC_...` 태그를 쓰는 스톡/모드): `Localization { ko { #tag = 한국어 } }` cfg. 미번역 키는 자동 영어 폴백.
-  2. **비태그형** (part cfg에 영어 하드코딩된 모드): ModuleManager 패치 `@PART[이름]:NEEDS[대상모드] { @title = 한국어 }`. 별도 파일이라 원본 무수정, 파트 이름 기준이라 모드 업데이트에도 재적용됨. MM 패치는 언어와 무관하게 적용되므로, 언어 전환(`disable`) 시 도구가 KSP-Loc 폴더를 비활성화(GameData 밖으로 이동)한다.
+  2. **비태그형** (part cfg에 영어 하드코딩된 모드): ModuleManager 패치 `@PART[이름]:NEEDS[대상모드] { @title = 한국어 }`. 별도 파일이라 원본 무수정, 파트 이름 기준이라 모드 업데이트에도 재적용됨. MM 패치는 언어와 무관하게 적용되므로, 언어 전환(`disable`) 시 도구가 KerbaLoc 폴더를 비활성화(GameData 밖으로 이동)한다.
 - **블랙리스트 적용**: 팩 생성(스튜디오)과 설치(CLI) 양쪽에서 공유 블랙리스트를 참조하여 위험 키를 번역/설치 대상에서 제외한다.
 - **스톡 게임**(Squad, SquadExpansion)도 하나의 팩으로 취급하여 전체 ko 사전을 제공한다.
 - **오염 감지**: 스톡 dictionary.cfg 등의 변조를 감지(해시/휴리스틱)하면 Steam 무결성 검사를 안내한다.
@@ -173,7 +175,7 @@ translation-db/
 
 현 설치본은 구방식 번역이 적용된 상태이므로, 실게임 검증 전에 원상 복구가 선행되어야 한다.
 
-`ksp-loc doctor` (또는 마이그레이션 스크립트)가 수행:
+`KerbaLoc doctor` (또는 마이그레이션 스크립트)가 수행:
 
 1. **감지**: 전체 GameData를 스캔하여 `en-us` 노드에 한글이 포함된 cfg를 목록화 (= 구방식으로 교체된 파일).
 2. **백업**: 현재 상태(번역된 파일들)를 타임스탬프 zip으로 보관 — 번역 자산 유실 방지. 이 번역문들은 이후 새 팩 생성의 시드로 재활용 가능(키·번역 추출).
@@ -182,7 +184,7 @@ translation-db/
    - 모드 → CKAN 설치 모드는 CKAN 재설치 안내(또는 자동화), 수동 설치 모드는 재다운로드 안내. `_TranslatorOutputs` 백업은 신뢰성 검증(en-us 노드에 한글 유무) 후에만 사용.
 4. **검증**: 복원 후 재스캔하여 잔여 오염 없음을 확인.
 
-## ksp-loc 도구 (Python, 전면 재작성)
+## KerbaLoc 도구 (Python, 전면 재작성)
 
 - **CLI 명령**: `scan`(설치 모드 분석) / `install`·`remove`(팩 관리) / `enable`·`disable`(언어 전환) / `doctor`(오염 감지·복원 안내) / `studio`(웹앱 실행)
 - **스튜디오** (FastAPI + 브라우저 UI, localhost):
@@ -203,7 +205,7 @@ translation-db/
 2. **변경 사항 고지 및 동의**
    - "이 도구가 게임에 가하는 변경은 두 가지뿐입니다" 를 명시:
      ① `buildID64.txt`의 `language` 한 줄 (게임이 이 파일로 표시 언어를 결정하기 때문 — 사유를 화면에 설명)
-     ② `GameData/KSP-Loc/` 폴더 생성 (번역팩 설치 위치)
+     ② `GameData/KerbaLoc/` 폴더 생성 (번역팩 설치 위치)
    - 함께 고지: 모드 원본 파일은 절대 수정하지 않음 / Steam 무결성 검사로 언제든 원상 복구 가능 / 게임 업데이트·무결성 검사 시 language가 리셋될 수 있으며 도구가 감지·재적용함.
    - 동의 후 진행.
 3. **환경 진단 (doctor)**
@@ -233,7 +235,7 @@ translation-db/
    - 실패/경고 항목은 클릭 시 에디터로 이동. 에디터: [원문 | 번역 | 상태(기계번역/검수됨/실패)] 테이블, 필터·검색, 상태 일괄 변경.
    - 자동 검증 통과가 적용의 전제 조건 (경고는 통과 가능, 오류는 차단).
 4. **적용 및 공유(선택)**
-   - 적용: `GameData/KSP-Loc/ko/<ModId>/`에 설치 + 언어 미전환 상태면 전환 제안 + "게임 재시작 필요" 안내.
+   - 적용: `GameData/KerbaLoc/ko/<ModId>/`에 설치 + 언어 미전환 상태면 전환 제안 + "게임 재시작 필요" 안내.
    - 공유(선택): 닉네임 입력 → 변형 메타(모델/날짜/커버리지) 자동 구성 → 프록시 업로드 → 생성된 PR 링크 표시. 용어집 변경분 동봉.
 
 ### 기존 번역 설치 흐름 (번역이 이미 DB에 있는 경우)
@@ -289,13 +291,11 @@ translation-db/
 - **소스 해시**: 바이트가 아닌 파싱된 (키,값) 정규화 집합의 sha256, `v1:` 알고리즘 버전 접두. `hash`/`keys_hash`/`mask_hash` 3종 + 키별 8-hex 지문.
 - **variantId**: `YYYY-MM-DD-<method>-<nick>[-N]`, `[a-z0-9-]`, 불투명 ID(도구는 파싱 금지, 정본은 pack.json). 머지 후 영구 불변, 수정은 새 변형 + `deprecatedBy`.
 - **LLM**: 기본 Gemini 3.1 Flash-Lite, 검증 실패 에스컬레이션 Gemini 3 Flash. Provider 프로토콜만 정의하고 v1은 Gemini 구현. 구조화 출력 강제, 인덱스 매칭, 병렬 8 + AIMD, 잡 단위 JSONL 재개, 키당 최대 3회 시도 후 검수 큐(영어 폴백이 안전 기본값), 서킷 브레이커(ERROR 30%).
-- **프록시**: GitHub App(권장) / Worker 무파싱 / DO 레이트리밋 / PoW / issue-ops 폴백 병행.
+- **프록시**: 봇 자격증명은 조직 레포 + fine-grained PAT(사용자 확정; 토큰 획득 함수는 추상화해 GitHub App 전환 여지 유지) / Worker 무파싱 / DO 레이트리밋 / PoW / issue-ops 폴백 병행.
 - **레이트리밋 세부**: IP 3/시·10/일, 전역 30/시·200/일(GitHub 2차 제한 역산) 등 부록 C 확정값.
 
-## 미확정 항목 (사용자 결정 대기)
+## 미확정 항목
 
-- **명칭**: 부록 E 권고 1위 `KerbaLoc`(도구 `kerbaloc`, 폴더 `GameData/KerbaLoc`, DB `kerbaloc-db`), 차선 `LocKAN`
-- **봇 자격증명**: GitHub App(권장) vs 조직 fine-grained PAT — App 채택 여부
 - Dobie 번역의 Squad 초기 변형 시드 재활용 — 원작자 허락/크레딧 협의 필요
 - ja 영어 유지 키 199개의 검토 큐 분류(자동 유지 vs 한국어화) 세부 목록 — 데이터 확보됨, 구현 시 확정
 - MM 패치 `:AFTER[<대상모드>]` vs `:FINAL` 정책 — 실게임 스파이크에서 검증
