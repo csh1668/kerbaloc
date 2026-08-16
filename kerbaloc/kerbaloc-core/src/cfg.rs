@@ -36,11 +36,13 @@ pub fn parse(text: &str) -> Result<Node, CfgError> {
             let brace = rest.find(['{', '}']);
             if let Some(e) = eq {
                 if brace.map_or(true, |b| e < b) {
-                    // 값 줄: 첫 '=' 기준 분리, 나머지 전체가 값
+                    // 값 줄: 첫 '=' 기준 분리. 중괄호는 값 안에서도 구조 문자이므로
+                    // 값은 다음 중괄호 직전까지만 취하고 나머지는 계속 처리한다.
                     let name = rest[..e].trim().to_string();
-                    let value = rest[e + 1..].trim().to_string();
+                    let end = brace.unwrap_or(rest.len());
+                    let value = rest[e + 1..end].trim().to_string();
                     nodes.last_mut().unwrap().values.push((name, value));
-                    rest = "";
+                    rest = rest[end..].trim();
                     continue;
                 }
             }
