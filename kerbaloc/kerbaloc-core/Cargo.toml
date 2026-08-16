@@ -15,6 +15,10 @@ regex.workspace = true
 unicode-normalization.workspace = true
 walkdir.workspace = true
 zip = { version = "2", default-features = false, features = ["deflate"] }
+anyhow.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
