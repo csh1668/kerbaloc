@@ -276,6 +276,27 @@ translation-db/
 - **인코딩**: cfg는 UTF-8(BOM 유무) 처리 일관성 필요. 게임의 cfg 리더는 UTF-8 BOM을 허용하는 것으로 보이나(기존 패치 동작 중) 팩 생성 시 BOM 없는 UTF-8로 통일.
 - **용어집 표류**: 팩마다 용어가 달라지는 문제 — CI가 용어집 위반을 경고(차단은 안 함).
 
+## 기술 스택 (2026-08-16 사용자 확정)
+
+**kerbaloc 도구 = Rust + Tauri 2 데스크톱 앱** (기존 Python 코드는 참조용으로만 사용, 전면 재작성):
+
+- **코어**: Rust stable, Cargo workspace 3분할 —
+  - `kerbaloc-core` (lib): 자작 ConfigNode 파서(값 내 `//` 절단·`｢｣`·`\uXXXX`·인라인 주석 모사), v1 정규화 해시, 검증기 11종, GameData 스캐너(CKAN registry/`.version` 관대 파서), DB 클라이언트(jsDelivr→Release→raw 폴백), LLM 파이프라인(Gemini REST, 배치/재개/검증 루프)
+  - `kerbaloc-cli` (bin): `scan`/`install`/`remove`/`enable`/`disable`/`doctor` + CI용 `validate` 서브커맨드
+  - `kerbaloc-app` (Tauri 2): 스튜디오. 데스크톱 창은 시스템 WebView(Windows=WebView2 — 한글 IME 안정)
+- **주요 크레이트**: serde/serde_json, tokio, reqwest, sha2, clap, thiserror, tracing, zip, unicode-normalization, winreg(Steam 감지), keyvalues-parser(VDF)
+- **프론트엔드**: TypeScript + **Svelte 5 + Vite**, TanStack Virtual(12k행 가상 스크롤 편집 테이블), Tailwind CSS v4. Tauri IPC(commands/events)로 코어 호출, 번역 진행률은 Tauri 이벤트 스트림
+- **배포**: Tauri bundler(NSIS 설치본 + 포터블 exe). ~~PyInstaller~~ 결정은 Tauri 채택으로 대체됨
+- **타입 공유**: DB JSON 스키마 → Rust는 serde 구조체, TS는 스키마 코드젠(json-schema-to-typescript) — 프록시(TS)와 프론트가 동일 타입 사용
+
+**업로드 프록시 (kerbaloc-proxy)**: Cloudflare Workers + TypeScript + Hono, Durable Objects(SQLite), WebCrypto, wrangler, vitest + @cloudflare/vitest-pool-workers. 봇 자격증명은 조직 fine-grained PAT 2슬롯 (부록 C).
+
+**번역 DB (kerbaloc-db)**: GitHub 조직 public 레포 + Actions 3워크플로(pr-validate/publish/nightly). **검증은 `kerbaloc-cli validate` 동일 바이너리 사용**(캐시된 cargo build 또는 릴리스 바이너리) — 도구·CI 검증 로직 단일화. jsonschema(2020-12), gh CLI, 재현 가능 zip.
+
+**게임 적용 레이어**: 코드 없음 — `Localization { ko { … } }` cfg(BOM 없는 UTF-8), ModuleManager 패치(`:NEEDS` 필수), buildID64.txt 한 줄. 플러그인 DLL/Unity 불필요.
+
+**품질 도구**: rustfmt + clippy / ESLint + prettier / cargo test + insta(스냅샷, `research/` 골든 데이터) / Playwright(스튜디오 스모크, 선택).
+
 ## 부록 (상세 설계 — Opus 서브에이전트 보고서, `appendix/` 하위)
 
 - **A. 마스크 가설 검증** — 스톡 원본 대조 정량 분석, 가설 기각 근거 수치
