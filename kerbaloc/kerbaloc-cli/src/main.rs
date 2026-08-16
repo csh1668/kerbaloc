@@ -51,22 +51,40 @@ enum Cmd {
     },
 }
 
-fn cmd_translate(root: &std::path::Path, mod_id: &str, nick: &str, install: bool, resume: bool) -> anyhow::Result<()> {
-    use kerbaloc_core::{glossary::Glossary, jobstore::JobStore, llm::gemini::GeminiProvider, llm::Provider, packgen, pipeline};
+fn cmd_translate(
+    root: &std::path::Path,
+    mod_id: &str,
+    nick: &str,
+    install: bool,
+    resume: bool,
+) -> anyhow::Result<()> {
+    use kerbaloc_core::{
+        glossary::Glossary, jobstore::JobStore, llm::gemini::GeminiProvider, llm::Provider,
+        packgen, pipeline,
+    };
     dotenvy::dotenv().ok();
     let api_key = std::env::var("GEMINI_API_KEY")
         .map_err(|_| anyhow::anyhow!("GEMINI_API_KEY 환경변수가 필요합니다 (.env 지원)"))?;
     let model = std::env::var("KERBALOC_MODEL").unwrap_or_else(|_| "gemini-3.1-flash-lite".into());
-    let esc_model = std::env::var("KERBALOC_MODEL_ESCALATION").unwrap_or_else(|_| "gemini-3-flash".into());
+    let esc_model =
+        std::env::var("KERBALOC_MODEL_ESCALATION").unwrap_or_else(|_| "gemini-3-flash".into());
 
     let units = scan::scan_gamedata(root);
     let Some(unit) = units.into_iter().find(|u| u.mod_id == mod_id) else {
-        anyhow::bail!("설치본에서 {mod_id}를 찾지 못했습니다. `kerbaloc scan`으로 ModId를 확인하세요.");
+        anyhow::bail!(
+            "설치본에서 {mod_id}를 찾지 못했습니다. `kerbaloc scan`으로 ModId를 확인하세요."
+        );
     };
-    println!("{}: {}키, 소스 {}", unit.mod_id, unit.entries.len(), &unit.source_hash[..22]);
+    println!(
+        "{}: {}키, 소스 {}",
+        unit.mod_id,
+        unit.entries.len(),
+        &unit.source_hash[..22]
+    );
 
     // 용어집: 실행 파일 기준이 아니라 레포/설치 어느 쪽이든 — 우선 레포 경로, 없으면 스킵
-    let gpath = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../glossary/core.ko.json");
+    let gpath =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../glossary/core.ko.json");
     let glossary = Glossary::load(&gpath)
         .map_err(|e| anyhow::anyhow!("코어 용어집 로드 실패({e}): {}", gpath.display()))?;
 
@@ -76,28 +94,50 @@ fn cmd_translate(root: &std::path::Path, mod_id: &str, nick: &str, install: bool
     let job_dir = root.join("KerbaLoc-jobs").join(&unit.mod_id);
     let (store, manifest) = if resume && job_dir.join("manifest.json").is_file() {
         let (s, m) = JobStore::open(&job_dir)?;
-        anyhow::ensure!(m.src_hash == unit.source_hash, "모드가 업데이트되어 재개할 수 없습니다. --resume 없이 새로 시작하세요.");
+        anyhow::ensure!(
+            m.src_hash == unit.source_hash,
+            "모드가 업데이트되어 재개할 수 없습니다. --resume 없이 새로 시작하세요."
+        );
         (s, m)
     } else {
-        let m = pipeline::make_manifest(&unit.mod_id, &unit.source_hash, provider.name(), provider.prices(), &unit.entries);
+        let m = pipeline::make_manifest(
+            &unit.mod_id,
+            &unit.source_hash,
+            provider.name(),
+            provider.prices(),
+            &unit.entries,
+        );
         (JobStore::create(&job_dir, &m)?, m)
     };
 
     let rt = tokio::runtime::Runtime::new()?;
     let report = rt.block_on(pipeline::translate_job(
-        &provider, &escalation, &unit.entries, &glossary, &unit.display_name,
-        &store, &manifest, 8,
+        &provider,
+        &escalation,
+        &unit.entries,
+        &glossary,
+        &unit.display_name,
+        &store,
+        &manifest,
+        8,
         &|done, total, cost| println!("  [{done}/{total}] 누적 ${cost:.4}"),
     ))?;
 
     println!(
         "완료: ok {} / 검수 필요 {} / 실패 {} — 비용 ${:.4}",
-        report.ok.len(), report.review.len(), report.failed.len(),
-        report.usage.cost_usd(provider.prices().0, provider.prices().1)
+        report.ok.len(),
+        report.review.len(),
+        report.failed.len(),
+        report
+            .usage
+            .cost_usd(provider.prices().0, provider.prices().1)
     );
 
     let variant = packgen::make_variant_id(&model.replace(['-', '.'], ""), nick);
-    let pack_dir = root.join("KerbaLoc-packs").join(&unit.mod_id).join(&variant);
+    let pack_dir = root
+        .join("KerbaLoc-packs")
+        .join(&unit.mod_id)
+        .join(&variant);
     packgen::build_pack(&pack_dir, &unit, &report.ok, &variant, &model)?;
     println!("팩 생성: {}", pack_dir.display());
 
@@ -105,7 +145,10 @@ fn cmd_translate(root: &std::path::Path, mod_id: &str, nick: &str, install: bool
         let review_path = pack_dir.join("review.txt");
         let mut txt = String::new();
         for r in &report.review {
-            txt.push_str(&format!("{}\n  EN: {}\n  후보: {:?}\n  위반: {:?}\n\n", r.key, r.en, r.candidates, r.violations));
+            txt.push_str(&format!(
+                "{}\n  EN: {}\n  후보: {:?}\n  위반: {:?}\n\n",
+                r.key, r.en, r.candidates, r.violations
+            ));
         }
         std::fs::write(&review_path, txt)?;
         println!("검수 목록: {}", review_path.display());
@@ -253,7 +296,12 @@ fn main() {
                 println!("설치되어 있지 않음: {lang}/{mod_id}");
             }
         }
-        Cmd::Translate { mod_id, nick, install, resume } => {
+        Cmd::Translate {
+            mod_id,
+            nick,
+            install,
+            resume,
+        } => {
             if let Err(e) = cmd_translate(&root, &mod_id, &nick, install, resume) {
                 eprintln!("오류: {e}");
                 std::process::exit(1);

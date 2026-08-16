@@ -25,7 +25,11 @@ fn respects_dual_caps() {
     let e = entries(500, "short");
     for b in plan_batches(&e) {
         assert!(b.items.len() <= 40, "키 수 상한 위반: {}", b.items.len());
-        let tok: usize = b.items.iter().map(|i| (i.en.len() + i.key.len()) / 4 + 8).sum();
+        let tok: usize = b
+            .items
+            .iter()
+            .map(|i| (i.en.len() + i.key.len()) / 4 + 8)
+            .sum();
         assert!(tok <= 2000, "토큰 상한 위반: {tok}");
     }
 }
@@ -42,7 +46,10 @@ fn long_values_go_to_small_batches() {
         let has_long = b.items.iter().any(|i| i.en.len() > 400);
         if has_long {
             assert!(b.items.len() <= 3, "긴 값 배치가 {}키", b.items.len());
-            assert!(b.items.iter().all(|i| i.en.len() > 400), "긴 값과 짧은 값 혼합");
+            assert!(
+                b.items.iter().all(|i| i.en.len() > 400),
+                "긴 값과 짧은 값 혼합"
+            );
         }
     }
 }

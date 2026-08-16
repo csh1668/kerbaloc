@@ -1,6 +1,6 @@
+use crate::cfg;
 use crate::pack::{validate_pack, PackMeta};
 use crate::scan::ModUnit;
-use crate::cfg;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -12,7 +12,11 @@ pub fn make_variant_id(method_slug: &str, nick: &str) -> String {
         .map(|c| c.to_ascii_lowercase())
         .take(16)
         .collect();
-    let nick = if nick.is_empty() { "anon".to_string() } else { nick };
+    let nick = if nick.is_empty() {
+        "anon".to_string()
+    } else {
+        nick
+    };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("시계 이상");
@@ -40,7 +44,11 @@ pub fn build_pack(
     model_name: &str,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(out_dir.join("Localization"))?;
-    let mut ko = cfg::Node { name: "ko".into(), values: vec![], children: vec![] };
+    let mut ko = cfg::Node {
+        name: "ko".into(),
+        values: vec![],
+        children: vec![],
+    };
     for (k, v) in translations {
         ko.values.push((k.clone(), v.clone()));
     }
@@ -66,7 +74,10 @@ pub fn build_pack(
     };
     let mut meta_json = serde_json::to_value(&meta)?;
     meta_json["model"] = serde_json::Value::String(model_name.to_string());
-    std::fs::write(out_dir.join("pack.json"), serde_json::to_string_pretty(&meta_json)?)?;
+    std::fs::write(
+        out_dir.join("pack.json"),
+        serde_json::to_string_pretty(&meta_json)?,
+    )?;
 
     let r = validate_pack(out_dir, Some(&unit.entries));
     anyhow::ensure!(

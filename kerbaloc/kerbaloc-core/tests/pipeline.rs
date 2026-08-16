@@ -5,10 +5,13 @@ use kerbaloc_core::pipeline::{make_manifest, translate_job};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// (i, key, en) -> ko 규칙 함수.
+type Rule = Box<dyn Fn(usize, &str, &str) -> Option<String> + Send + Sync>;
+
 /// 페이로드를 파싱해 규칙 함수로 응답을 만드는 가짜 공급자.
 struct FakeProvider {
     name: String,
-    rule: Box<dyn Fn(usize, &str, &str) -> Option<String> + Send + Sync>, // (i, key, en) -> ko
+    rule: Rule,
     calls: AtomicUsize,
 }
 
@@ -37,11 +40,17 @@ impl Provider for FakeProvider {
                 out.push(TranslatedItem { i, ko });
             }
         }
-        Ok((out, Usage { input_tokens: 100, output_tokens: 50 }))
+        Ok((
+            out,
+            Usage {
+                input_tokens: 100,
+                output_tokens: 50,
+            },
+        ))
     }
 }
 
-fn good_rule() -> Box<dyn Fn(usize, &str, &str) -> Option<String> + Send + Sync> {
+fn good_rule() -> Rule {
     Box::new(|_, _, en| Some(format!("한{en}")))
 }
 
@@ -68,16 +77,34 @@ fn run(
     let m = make_manifest("TestMod", "v1:sha256:x", p.name(), p.prices(), e);
     let store = JobStore::create(dir, &m)?;
     let g = glossary();
-    tokio::runtime::Runtime::new().unwrap().block_on(translate_job(
-        p, esc, e, &g, "TestMod", &store, &m, 4, &|_, _, _| {},
-    ))
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(translate_job(
+            p,
+            esc,
+            e,
+            &g,
+            "TestMod",
+            &store,
+            &m,
+            4,
+            &|_, _, _| {},
+        ))
 }
 
 #[test]
 fn all_ok_when_provider_is_good() {
     let e = entries(50);
-    let p = FakeProvider { name: "fake".into(), rule: good_rule(), calls: AtomicUsize::new(0) };
-    let esc = FakeProvider { name: "esc".into(), rule: good_rule(), calls: AtomicUsize::new(0) };
+    let p = FakeProvider {
+        name: "fake".into(),
+        rule: good_rule(),
+        calls: AtomicUsize::new(0),
+    };
+    let esc = FakeProvider {
+        name: "esc".into(),
+        rule: good_rule(),
+        calls: AtomicUsize::new(0),
+    };
     let d = tempfile::tempdir().unwrap();
     let r = run(&e, &p, &esc, d.path()).unwrap();
     assert_eq!(r.ok.len(), 50);
@@ -95,7 +122,11 @@ fn token_violation_goes_through_retry_then_escalation() {
         calls: AtomicUsize::new(0),
     };
     // 에스컬레이션은 올바르게 번역
-    let esc = FakeProvider { name: "esc".into(), rule: good_rule(), calls: AtomicUsize::new(0) };
+    let esc = FakeProvider {
+        name: "esc".into(),
+        rule: good_rule(),
+        calls: AtomicUsize::new(0),
+    };
     let d = tempfile::tempdir().unwrap();
     let r = run(&e, &p, &esc, d.path()).unwrap();
     assert_eq!(r.ok.len(), 10, "에스컬레이션에서 전부 회복");
@@ -105,9 +136,12 @@ fn token_violation_goes_through_retry_then_escalation() {
 #[test]
 fn permanent_fail_lands_in_review_and_invariant_holds() {
     let e = entries(10);
-    let bad: Box<dyn Fn(usize, &str, &str) -> Option<String> + Send + Sync> =
-        Box::new(|_, _, _| Some("한글만".into()));
-    let p = FakeProvider { name: "fake".into(), rule: bad, calls: AtomicUsize::new(0) };
+    let bad: Rule = Box::new(|_, _, _| Some("한글만".into()));
+    let p = FakeProvider {
+        name: "fake".into(),
+        rule: bad,
+        calls: AtomicUsize::new(0),
+    };
     let esc = FakeProvider {
         name: "esc".into(),
         rule: Box::new(|_, _, _| Some("한글만".into())),
@@ -126,10 +160,20 @@ fn missing_response_items_are_retried_not_lost() {
     // 짝수 인덱스만 응답 → 나머지는 재시도 경로로
     let p = FakeProvider {
         name: "fake".into(),
-        rule: Box::new(|i, _, en| if i % 2 == 0 { Some(format!("한{en}")) } else { None }),
+        rule: Box::new(|i, _, en| {
+            if i % 2 == 0 {
+                Some(format!("한{en}"))
+            } else {
+                None
+            }
+        }),
         calls: AtomicUsize::new(0),
     };
-    let esc = FakeProvider { name: "esc".into(), rule: good_rule(), calls: AtomicUsize::new(0) };
+    let esc = FakeProvider {
+        name: "esc".into(),
+        rule: good_rule(),
+        calls: AtomicUsize::new(0),
+    };
     let d = tempfile::tempdir().unwrap();
     let r = run(&e, &p, &esc, d.path()).unwrap();
     assert_eq!(r.ok.len() + r.review.len() + r.failed.len(), 10, "불변식");
@@ -144,7 +188,11 @@ fn circuit_breaker_trips_on_mass_errors() {
         rule: Box::new(|_, _, _| Some("한글만".into())), // 전부 토큰 위반
         calls: AtomicUsize::new(0),
     };
-    let esc = FakeProvider { name: "esc".into(), rule: good_rule(), calls: AtomicUsize::new(0) };
+    let esc = FakeProvider {
+        name: "esc".into(),
+        rule: good_rule(),
+        calls: AtomicUsize::new(0),
+    };
     let d = tempfile::tempdir().unwrap();
     assert!(run(&e, &p, &esc, d.path()).is_err(), "서킷 브레이커 발동");
 }

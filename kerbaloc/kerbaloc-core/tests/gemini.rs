@@ -21,6 +21,7 @@ fn missing_candidates_is_error() {
 
 #[test]
 fn non_json_text_part_is_error() {
-    let json = r#"{"candidates": [{"content": {"parts": [{"text": "I cannot translate this."}]}}]}"#;
+    let json =
+        r#"{"candidates": [{"content": {"parts": [{"text": "I cannot translate this."}]}}]}"#;
     assert!(parse_response(json).is_err());
 }

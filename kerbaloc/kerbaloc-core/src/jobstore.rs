@@ -30,13 +30,20 @@ impl JobStore {
         std::fs::create_dir_all(dir)?;
         std::fs::write(dir.join("manifest.json"), serde_json::to_string_pretty(m)?)?;
         std::fs::write(dir.join("results.jsonl"), "")?;
-        Ok(JobStore { dir: dir.to_path_buf() })
+        Ok(JobStore {
+            dir: dir.to_path_buf(),
+        })
     }
 
     pub fn open(dir: &Path) -> anyhow::Result<(JobStore, Manifest)> {
         let m: Manifest =
             serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json"))?)?;
-        Ok((JobStore { dir: dir.to_path_buf() }, m))
+        Ok((
+            JobStore {
+                dir: dir.to_path_buf(),
+            },
+            m,
+        ))
     }
 
     /// 배치 완료 기록 (JSONL append, 줄 단위 원자성).

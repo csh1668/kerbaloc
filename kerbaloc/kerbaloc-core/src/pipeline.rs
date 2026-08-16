@@ -78,6 +78,7 @@ fn check(key: &str, src: &str, dst: &str) -> Result<(), Vec<String>> {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 내부 API — 파라미터 구조체는 스튜디오 도입 시 정리
 pub async fn translate_job(
     provider: &dyn Provider,
     escalation: &dyn Provider,
@@ -129,13 +130,17 @@ pub async fn translate_job(
             Err(e) => {
                 // 배치 전체 실패 → 키들을 재시도 큐로
                 for it in &items {
-                    retry.push((it.key.clone(), it.en.clone(), None, vec![format!("API 오류: {e}")]));
+                    retry.push((
+                        it.key.clone(),
+                        it.en.clone(),
+                        None,
+                        vec![format!("API 오류: {e}")],
+                    ));
                 }
             }
             Ok((out, u)) => {
                 usage.add(&u);
-                let by_i: BTreeMap<usize, String> =
-                    out.into_iter().map(|t| (t.i, t.ko)).collect();
+                let by_i: BTreeMap<usize, String> = out.into_iter().map(|t| (t.i, t.ko)).collect();
                 let mut good: Vec<(String, String)> = vec![];
                 for it in &items {
                     match by_i.get(&it.i) {
@@ -217,7 +222,12 @@ pub async fn translate_job(
                 for it in &items {
                     let cand_prev: Vec<String> = it.prev.iter().cloned().collect();
                     match by_i.get(&it.i) {
-                        None => still.push((it.key.clone(), it.en.clone(), cand_prev, vec!["응답 누락".into()])),
+                        None => still.push((
+                            it.key.clone(),
+                            it.en.clone(),
+                            cand_prev,
+                            vec!["응답 누락".into()],
+                        )),
                         Some(ko) => match check(&it.key, &it.en, ko) {
                             Ok(()) => good.push((it.key.clone(), ko.clone())),
                             Err(errs) => {
@@ -269,7 +279,12 @@ pub async fn translate_job(
                         }
                         Err(errs) => {
                             candidates.push(t.ko.clone());
-                            review.push(ReviewItem { key, en, candidates, violations: errs });
+                            review.push(ReviewItem {
+                                key,
+                                en,
+                                candidates,
+                                violations: errs,
+                            });
                         }
                     },
                 }
@@ -285,14 +300,17 @@ pub async fn translate_job(
         }
     }
     for k in entries.keys() {
-        let covered = ok.contains_key(k)
-            || review.iter().any(|r| &r.key == k)
-            || failed.contains_key(k);
+        let covered =
+            ok.contains_key(k) || review.iter().any(|r| &r.key == k) || failed.contains_key(k);
         if !covered {
             failed.insert(k.clone(), "분류 누락 (내부 오류)".into());
         }
     }
 
-    Ok(TranslationReport { ok, review, failed, usage })
+    Ok(TranslationReport {
+        ok,
+        review,
+        failed,
+        usage,
+    })
 }
-

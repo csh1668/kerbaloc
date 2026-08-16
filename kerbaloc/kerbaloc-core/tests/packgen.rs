@@ -11,7 +11,10 @@ fn unit() -> ModUnit {
         mod_id: "TestMod".into(),
         id_source: IdSource::Folder,
         display_name: "Test Mod".into(),
-        version: VersionInfo { raw: None, source: "unknown" },
+        version: VersionInfo {
+            raw: None,
+            source: "unknown",
+        },
         files: vec![],
         source_hash: kerbaloc_core::hash::source_hash(&entries),
         keys_hash: kerbaloc_core::hash::keys_hash(&entries),
@@ -34,7 +37,8 @@ fn built_pack_passes_validation_and_roundtrips() {
     let text = std::fs::read_to_string(d.path().join("Localization/ko.cfg")).unwrap();
     assert!(cfg::roundtrip_ok(&text).unwrap());
     let meta: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(d.path().join("pack.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(d.path().join("pack.json")).unwrap())
+            .unwrap();
     assert_eq!(meta["src_sha256"], u.source_hash.as_str());
     assert_eq!(meta["keys_translated"], 2);
 }

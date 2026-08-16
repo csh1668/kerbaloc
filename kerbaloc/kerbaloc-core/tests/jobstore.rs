@@ -22,7 +22,10 @@ fn create_record_reopen() {
         .record(
             "b0001",
             &[("#a".into(), "가".into()), ("#b".into(), "나".into())],
-            &Usage { input_tokens: 100, output_tokens: 50 },
+            &Usage {
+                input_tokens: 100,
+                output_tokens: 50,
+            },
         )
         .unwrap();
 

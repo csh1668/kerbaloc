@@ -21,11 +21,20 @@ fn loads_core_seed() {
 fn word_boundary_and_alias_matching() {
     let g = core();
     // "Apollo"의 "Ap"는 단어 경계가 아니므로 매칭 금지
-    assert!(!g.matches(&["Apollo program"]).iter().any(|e| e.en == "apoapsis"));
+    assert!(!g
+        .matches(&["Apollo program"])
+        .iter()
+        .any(|e| e.en == "apoapsis"));
     // alias "dV"는 단어 경계로 매칭
-    assert!(g.matches(&["Total dV required"]).iter().any(|e| e.en == "delta-v"));
+    assert!(g
+        .matches(&["Total dV required"])
+        .iter()
+        .any(|e| e.en == "delta-v"));
     // 대소문자 무시
-    assert!(g.matches(&["THRUST limiter"]).iter().any(|e| e.en == "thrust"));
+    assert!(g
+        .matches(&["THRUST limiter"])
+        .iter()
+        .any(|e| e.en == "thrust"));
 }
 
 #[test]
