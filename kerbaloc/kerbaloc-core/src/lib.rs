@@ -1,4 +1,5 @@
 pub mod avc;
+pub mod batching;
 pub mod cfg;
 pub mod ckan;
 pub mod doctor;
