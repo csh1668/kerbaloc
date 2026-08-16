@@ -5,7 +5,7 @@ use base64::Engine;
 use serde_json::json;
 use std::path::Path;
 
-pub const DEFAULT_PROXY: &str = "https://kerbaloc-proxy.csh1668.workers.dev";
+pub const DEFAULT_PROXY: &str = "https://kerbaloc-proxy.kerbaloc-proxy.workers.dev";
 
 pub struct ShareResult {
     pub pr_url: String,
