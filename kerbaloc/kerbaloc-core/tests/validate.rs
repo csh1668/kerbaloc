@@ -91,9 +91,9 @@ fn golden_legacy_dictionary_passes() {
     };
     let en = extract_localization(&parse(&stock).unwrap(), "en-us");
     let ko = extract_localization(&parse(&legacy_text).unwrap(), "en-us"); // 구 패치는 en-us 노드에 한국어
-                                                                     // 검증기가 잡아낸 구 패치 번역의 실제 결함 (2026-08-16 전수 확인):
-                                                                     // 토큰 오타(<<2>]), 토큰 누락/오용, 선택 토큰 닫힘 누락(<<1[자동/수동>>),
-                                                                     // richtext 태그 누락, 키 밀림 등. 검증기의 정탐이므로 골든에서 제외한다.
+                                                                           // 검증기가 잡아낸 구 패치 번역의 실제 결함 (2026-08-16 전수 확인):
+                                                                           // 토큰 오타(<<2>]), 토큰 누락/오용, 선택 토큰 닫힘 누락(<<1[자동/수동>>),
+                                                                           // richtext 태그 누락, 키 밀림 등. 검증기의 정탐이므로 골든에서 제외한다.
     const KNOWN_LEGACY_DEFECTS: &[&str] = &[
         "#autoLOC_250813",
         "#autoLOC_284439",

@@ -74,6 +74,12 @@ enum DbCmd {
         #[arg(long)]
         variant: Option<String>,
     },
+    /// 팩을 익명 프록시로 공유 (계정·키 불필요 — 자동 PR 생성)
+    Share {
+        pack_dir: PathBuf,
+        #[arg(long, default_value = "anon")]
+        nick: String,
+    },
 }
 
 fn cmd_db(root: &std::path::Path, cmd: DbCmd) -> anyhow::Result<()> {
@@ -164,6 +170,20 @@ fn cmd_db(root: &std::path::Path, cmd: DbCmd) -> anyhow::Result<()> {
             }
             let dest = kerbaloc_core::pack::install_pack(root, &pack_dir)?;
             println!("설치됨: {}", dest.display());
+        }
+        DbCmd::Share { pack_dir, nick } => {
+            let r = kerbaloc_core::pack::validate_pack(&pack_dir, None);
+            if !r.errors.is_empty() {
+                for e in &r.errors {
+                    eprintln!("오류: {e}");
+                }
+                anyhow::bail!("팩 검증 실패 — 공유 중단");
+            }
+            let proxy = std::env::var("KERBALOC_PROXY_URL")
+                .unwrap_or_else(|_| kerbaloc_core::share::DEFAULT_PROXY.into());
+            let rt = tokio::runtime::Runtime::new()?;
+            let result = rt.block_on(kerbaloc_core::share::share_pack(&proxy, &pack_dir, &nick))?;
+            println!("공유 완료! PR: {}", result.pr_url);
         }
     }
     Ok(())
@@ -328,7 +348,7 @@ fn main() {
     let needs_root = !matches!(
         cli.cmd,
         Cmd::Db {
-            cmd: DbCmd::Index { .. } | DbCmd::Validate { .. } | DbCmd::List
+            cmd: DbCmd::Index { .. } | DbCmd::Validate { .. } | DbCmd::List | DbCmd::Share { .. }
         }
     );
     let root = if needs_root {
