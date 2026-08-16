@@ -15,5 +15,8 @@ regex.workspace = true
 unicode-normalization.workspace = true
 walkdir.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
 [dev-dependencies]
 tempfile = "3"
