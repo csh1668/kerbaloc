@@ -2,6 +2,8 @@ pub mod avc;
 pub mod batching;
 pub mod cfg;
 pub mod ckan;
+pub mod dbclient;
+pub mod dbrepo;
 pub mod doctor;
 pub mod game;
 pub mod glossary;

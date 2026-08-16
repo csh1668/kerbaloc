@@ -37,6 +37,11 @@ enum Cmd {
         #[arg(long, default_value = "ko")]
         lang: String,
     },
+    /// 번역 DB 레포 조작 (인덱스·검증·다운로드)
+    Db {
+        #[command(subcommand)]
+        cmd: DbCmd,
+    },
     /// LLM으로 모드 번역 → 검증 → 팩 생성
     Translate {
         mod_id: String,
@@ -49,6 +54,116 @@ enum Cmd {
         #[arg(long)]
         resume: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum DbCmd {
+    /// 레포 디렉터리에서 index/ko.json 생성
+    Index {
+        repo_dir: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// 레포 내 모든 팩 검증 (CI 게이트)
+    Validate { repo_dir: PathBuf },
+    /// 원격 DB의 팩 목록 표시
+    List,
+    /// 원격 DB에서 팩 다운로드·검증·설치
+    Install {
+        mod_id: String,
+        #[arg(long)]
+        variant: Option<String>,
+    },
+}
+
+fn cmd_db(root: &std::path::Path, cmd: DbCmd) -> anyhow::Result<()> {
+    match cmd {
+        DbCmd::Index { repo_dir, out } => {
+            let idx = kerbaloc_core::dbrepo::build_index(&repo_dir)?;
+            let text = serde_json::to_string_pretty(&idx)? + "\n";
+            match out {
+                Some(p) => {
+                    if let Some(parent) = p.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&p, text)?;
+                    println!("인덱스 생성: {}", p.display());
+                }
+                None => print!("{text}"),
+            }
+        }
+        DbCmd::Validate { repo_dir } => {
+            let r = kerbaloc_core::dbrepo::validate_repo(&repo_dir);
+            for w in &r.warnings {
+                println!("경고: {w}");
+            }
+            for e in &r.errors {
+                println!("오류: {e}");
+            }
+            if r.errors.is_empty() {
+                println!("DB 검증 통과 (경고 {}건)", r.warnings.len());
+            } else {
+                std::process::exit(1);
+            }
+        }
+        DbCmd::List => {
+            let rt = tokio::runtime::Runtime::new()?;
+            let (manifest, index) = rt.block_on(async {
+                let m = kerbaloc_core::dbclient::fetch_manifest().await?;
+                let i = kerbaloc_core::dbclient::fetch_index(&m).await?;
+                anyhow::Ok((m, i))
+            })?;
+            println!("DB 커밋: {}", &manifest.commit[..12]);
+            println!("{:<36} {:<40} {:>9}", "ModId", "변형", "키수");
+            for p in &index.packs {
+                for v in &p.variants {
+                    println!(
+                        "{:<36} {:<40} {:>4}/{:<4}",
+                        p.mod_id, v.variant_id, v.keys_translated, v.keys_target
+                    );
+                }
+            }
+        }
+        DbCmd::Install { mod_id, variant } => {
+            let rt = tokio::runtime::Runtime::new()?;
+            let tmp = tempfile::tempdir()?;
+            let pack_dir = rt.block_on(async {
+                let m = kerbaloc_core::dbclient::fetch_manifest().await?;
+                let i = kerbaloc_core::dbclient::fetch_index(&m).await?;
+                let p = i
+                    .packs
+                    .iter()
+                    .find(|p| p.mod_id == mod_id)
+                    .ok_or_else(|| anyhow::anyhow!("DB에 {mod_id} 팩이 없습니다"))?;
+                let v = match &variant {
+                    Some(id) => p
+                        .variants
+                        .iter()
+                        .find(|v| &v.variant_id == id)
+                        .ok_or_else(|| anyhow::anyhow!("변형 {id} 없음"))?,
+                    None => p.variants.last().expect("변형 최소 1개"),
+                };
+                println!("다운로드: {}/{} ({}키)", p.mod_id, v.variant_id, v.keys_translated);
+                kerbaloc_core::dbclient::download_variant(&m, v, tmp.path()).await?;
+                anyhow::Ok(tmp.path().to_path_buf())
+            })?;
+            // 설치본 원문과 대조 검증 후 설치
+            let src = source_entries_for(root, &pack_dir);
+            let r = kerbaloc_core::pack::validate_pack(&pack_dir, src.as_ref());
+            for w in &r.warnings {
+                println!("경고: {w}");
+            }
+            if !r.errors.is_empty() {
+                for e in &r.errors {
+                    eprintln!("오류: {e}");
+                }
+                anyhow::bail!("팩 검증 실패 — 설치 중단");
+            }
+            let dest = kerbaloc_core::pack::install_pack(root, &pack_dir)?;
+            println!("설치됨: {}", dest.display());
+        }
+    }
+    Ok(())
 }
 
 fn cmd_translate(
@@ -294,6 +409,12 @@ fn main() {
                 println!("제거됨: {lang}/{mod_id}");
             } else {
                 println!("설치되어 있지 않음: {lang}/{mod_id}");
+            }
+        }
+        Cmd::Db { cmd } => {
+            if let Err(e) = cmd_db(&root, cmd) {
+                eprintln!("오류: {e}");
+                std::process::exit(1);
             }
         }
         Cmd::Translate {
