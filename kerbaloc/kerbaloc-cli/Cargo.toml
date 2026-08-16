@@ -1,0 +1,12 @@
+[package]
+name = "kerbaloc-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "kerbaloc"
+path = "src/main.rs"
+
+[dependencies]
+kerbaloc-core = { path = "../kerbaloc-core" }
+clap = { version = "4", features = ["derive"] }

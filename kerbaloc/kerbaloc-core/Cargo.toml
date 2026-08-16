@@ -1,0 +1,19 @@
+[package]
+name = "kerbaloc-core"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "kerbaloc_core"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+regex.workspace = true
+unicode-normalization.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
