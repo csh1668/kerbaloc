@@ -324,7 +324,18 @@ fn source_entries_for(
 
 fn main() {
     let cli = Cli::parse();
-    let root = resolve_root(cli.root);
+    // db index/validate는 KSP 설치 없이 동작해야 한다(CI 러너) — 루트는 지연 해석.
+    let needs_root = !matches!(
+        cli.cmd,
+        Cmd::Db {
+            cmd: DbCmd::Index { .. } | DbCmd::Validate { .. } | DbCmd::List
+        }
+    );
+    let root = if needs_root {
+        resolve_root(cli.root)
+    } else {
+        cli.root.unwrap_or_else(|| PathBuf::from("."))
+    };
     match cli.cmd {
         Cmd::Status => {
             println!("KSP: {}", root.display());
