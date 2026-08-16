@@ -5,7 +5,29 @@ use kerbaloc_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager, State};
+
+/// GameData 스캔은 수 초 걸리므로 결과를 캐시한다. refresh(force)로만 무효화.
+#[derive(Default)]
+struct ScanCache(Mutex<Option<Vec<scan::ModUnit>>>);
+
+fn cached_units(app: &AppHandle, force: bool) -> Result<Vec<scan::ModUnit>, String> {
+    let root = resolve_root(app)?;
+    let state: State<ScanCache> = app.state();
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    if force || guard.is_none() {
+        *guard = Some(scan::scan_gamedata(&root));
+    }
+    Ok(guard.as_ref().unwrap().clone())
+}
+
+fn cached_unit(app: &AppHandle, mod_id: &str) -> Result<scan::ModUnit, String> {
+    cached_units(app, false)?
+        .into_iter()
+        .find(|u| u.mod_id == mod_id)
+        .ok_or_else(|| format!("설치본에서 {mod_id}를 찾지 못했습니다"))
+}
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct Settings {
@@ -67,10 +89,10 @@ fn set_language(app: AppHandle, lang: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn scan_units(app: AppHandle) -> Result<Vec<UnitInfo>, String> {
+fn scan_units(app: AppHandle, force: bool) -> Result<Vec<UnitInfo>, String> {
     let root = resolve_root(&app)?;
     let installed_dir = root.join("GameData").join("KerbaLoc").join("ko");
-    Ok(scan::scan_gamedata(&root)
+    Ok(cached_units(&app, force)?
         .into_iter()
         .map(|u| UnitInfo {
             installed: installed_dir.join(&u.mod_id).is_dir(),
@@ -132,10 +154,7 @@ async fn install_from_db(
     dbclient::download_variant(&m, v, tmp.path())
         .await
         .map_err(|e| e.to_string())?;
-    let src = scan::scan_gamedata(&root)
-        .into_iter()
-        .find(|u| u.mod_id == mod_id)
-        .map(|u| u.entries);
+    let src = cached_unit(&app, &mod_id).ok().map(|u| u.entries);
     let r = pack::validate_pack(tmp.path(), src.as_ref());
     if !r.errors.is_empty() {
         return Err(format!("팩 검증 실패:\n{}", r.errors.join("\n")));
@@ -152,6 +171,7 @@ fn remove_pack(app: AppHandle, mod_id: String) -> Result<bool, String> {
 
 #[derive(Serialize, Clone)]
 struct TranslateProgress {
+    mod_id: String,
     done: usize,
     total: usize,
     cost: f64,
@@ -159,6 +179,7 @@ struct TranslateProgress {
 
 #[derive(Serialize)]
 struct TranslateResult {
+    mod_id: String,
     ok: usize,
     review: Vec<serde_json::Value>,
     failed: usize,
@@ -166,21 +187,17 @@ struct TranslateResult {
     pack_dir: String,
 }
 
-#[tauri::command]
-async fn translate_mod(app: AppHandle, mod_id: String) -> Result<TranslateResult, String> {
+async fn translate_one(app: &AppHandle, mod_id: &str) -> Result<TranslateResult, String> {
     use kerbaloc_core::llm::{gemini::GeminiProvider, Provider};
-    let root = resolve_root(&app)?;
-    let settings = load_settings_inner(&app);
+    let root = resolve_root(app)?;
+    let settings = load_settings_inner(app);
     let api_key = settings
         .gemini_api_key
         .filter(|k| !k.is_empty())
         .ok_or("설정에서 Gemini API 키를 입력하세요")?;
     let nick = settings.nick.unwrap_or_else(|| "anon".into());
 
-    let unit = scan::scan_gamedata(&root)
-        .into_iter()
-        .find(|u| u.mod_id == mod_id)
-        .ok_or_else(|| format!("설치본에서 {mod_id}를 찾지 못했습니다"))?;
+    let unit = cached_unit(app, mod_id)?;
 
     let gpath = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../glossary/core.ko.json");
     let glossary = Glossary::load(&gpath).map_err(|e| e.to_string())?;
@@ -198,6 +215,7 @@ async fn translate_mod(app: AppHandle, mod_id: String) -> Result<TranslateResult
     let store = JobStore::create(&job_dir, &manifest).map_err(|e| e.to_string())?;
 
     let app2 = app.clone();
+    let mod_id2 = mod_id.to_string();
     let report = pipeline::translate_job(
         &provider,
         &escalation,
@@ -210,7 +228,7 @@ async fn translate_mod(app: AppHandle, mod_id: String) -> Result<TranslateResult
         &move |done, total, cost| {
             let _ = app2.emit(
                 "translate-progress",
-                TranslateProgress { done, total, cost },
+                TranslateProgress { mod_id: mod_id2.clone(), done, total, cost },
             );
         },
     )
@@ -232,6 +250,7 @@ async fn translate_mod(app: AppHandle, mod_id: String) -> Result<TranslateResult
     .map_err(|e| e.to_string())?;
 
     Ok(TranslateResult {
+        mod_id: mod_id.to_string(),
         ok: report.ok.len(),
         review: report
             .review
@@ -248,6 +267,58 @@ async fn translate_mod(app: AppHandle, mod_id: String) -> Result<TranslateResult
             .cost_usd(provider.prices().0, provider.prices().1),
         pack_dir: pack_dir.to_string_lossy().to_string(),
     })
+}
+
+#[tauri::command]
+async fn translate_mod(app: AppHandle, mod_id: String) -> Result<TranslateResult, String> {
+    translate_one(&app, &mod_id).await
+}
+
+#[derive(Serialize, Clone)]
+struct BatchModDone {
+    mod_id: String,
+    ok: usize,
+    review: usize,
+    failed: usize,
+    cost: f64,
+    error: Option<String>,
+    installed: bool,
+}
+
+/// 여러 모드를 순차 번역(모드 내부는 병렬 배치). 각 모드 완료마다 이벤트 발행,
+/// 성공한 팩은 즉시 게임에 설치.
+#[tauri::command]
+async fn translate_batch(app: AppHandle, mod_ids: Vec<String>) -> Result<Vec<BatchModDone>, String> {
+    let root = resolve_root(&app)?;
+    let mut out = vec![];
+    for mod_id in mod_ids {
+        let done = match translate_one(&app, &mod_id).await {
+            Ok(r) => {
+                let installed = pack::install_pack(&root, &PathBuf::from(&r.pack_dir)).is_ok();
+                BatchModDone {
+                    mod_id: mod_id.clone(),
+                    ok: r.ok,
+                    review: r.review.len(),
+                    failed: r.failed,
+                    cost: r.cost,
+                    error: None,
+                    installed,
+                }
+            }
+            Err(e) => BatchModDone {
+                mod_id: mod_id.clone(),
+                ok: 0,
+                review: 0,
+                failed: 0,
+                cost: 0.0,
+                error: Some(e),
+                installed: false,
+            },
+        };
+        let _ = app.emit("batch-mod-done", done.clone());
+        out.push(done);
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -281,10 +352,7 @@ struct ModKey {
 fn get_mod_keys(app: AppHandle, mod_id: String) -> Result<Vec<ModKey>, String> {
     use kerbaloc_core::{cfg, loc};
     let root = resolve_root(&app)?;
-    let unit = scan::scan_gamedata(&root)
-        .into_iter()
-        .find(|u| u.mod_id == mod_id)
-        .ok_or_else(|| format!("설치본에서 {mod_id}를 찾지 못했습니다"))?;
+    let unit = cached_unit(&app, &mod_id)?;
     let installed_cfg = root
         .join("GameData")
         .join("KerbaLoc")
@@ -334,10 +402,8 @@ fn save_mod_keys(
     let root = resolve_root(&app)?;
     let settings = load_settings_inner(&app);
     let nick = settings.nick.unwrap_or_else(|| "anon".into());
-    let unit = scan::scan_gamedata(&root)
-        .into_iter()
-        .find(|u| u.mod_id == mod_id)
-        .ok_or_else(|| format!("설치본에서 {mod_id}를 찾지 못했습니다"))?;
+    let unit = cached_unit(&app, &mod_id)?;
+    let _ = &root;
 
     let mut translations: BTreeMap<String, String> = BTreeMap::new();
     let mut errors: Vec<String> = vec![];
@@ -402,6 +468,7 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(ScanCache::default())
         .invoke_handler(tauri::generate_handler![
             game_status,
             set_language,
@@ -410,6 +477,7 @@ pub fn run() {
             install_from_db,
             remove_pack,
             translate_mod,
+            translate_batch,
             install_local_pack,
             share_pack_cmd,
             get_mod_keys,

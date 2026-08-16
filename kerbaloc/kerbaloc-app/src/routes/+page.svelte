@@ -22,17 +22,49 @@
     en: string;
     candidates: string[];
     violations: string[];
-    edited?: string;
   }
 
   let status = $state<{ root: string; language: string | null } | null>(null);
   let units = $state<Unit[]>([]);
   let dbPacks = $state<Map<string, DbVariant[]>>(new Map());
-  let loading = $state("");
-  let error = $state("");
-  let toast = $state("");
+  let busy = $state(false);
 
-  // 번역 모달 상태
+  // ── 토스트 ──
+  interface Toast {
+    id: number;
+    msg: string;
+    kind: "info" | "ok" | "err" | "busy";
+  }
+  let toasts = $state<Toast[]>([]);
+  let toastSeq = 0;
+  function toast(msg: string, kind: Toast["kind"] = "ok", ttlMs = 5000): number {
+    const id = ++toastSeq;
+    toasts.push({ id, msg, kind });
+    if (ttlMs > 0) setTimeout(() => dismiss(id), ttlMs);
+    return id;
+  }
+  function dismiss(id: number) {
+    toasts = toasts.filter((t) => t.id !== id);
+  }
+  async function withBusy<T>(msg: string, fn: () => Promise<T>): Promise<T | undefined> {
+    const id = toast(msg, "busy", 0);
+    busy = true;
+    try {
+      return await fn();
+    } catch (e) {
+      toast(String(e), "err", 12000);
+      return undefined;
+    } finally {
+      dismiss(id);
+      busy = false;
+    }
+  }
+
+  // ── 선택 ──
+  let selected = $state<Record<string, boolean>>({});
+  const selectedIds = () => Object.keys(selected).filter((k) => selected[k]);
+
+  // ── 단일 번역 모달 ──
   let translating = $state<string | null>(null);
   let progress = $state({ done: 0, total: 0, cost: 0 });
   let result = $state<{
@@ -43,7 +75,16 @@
     pack_dir: string;
   } | null>(null);
 
-  // 키 에디터
+  // ── 일괄 번역 모달 ──
+  interface BatchRow {
+    mod_id: string;
+    status: "대기" | "진행" | "완료" | "오류";
+    detail: string;
+  }
+  let batch = $state<BatchRow[] | null>(null);
+  let batchTotalCost = $state(0);
+
+  // ── 키 에디터 ──
   interface ModKey {
     key: string;
     en: string;
@@ -56,108 +97,101 @@
   let keyErrors = $state<string[]>([]);
   let keySaving = $state(false);
 
-  // 설정
+  // ── 설정 ──
   let showSettings = $state(false);
-  let settings = $state<{ ksp_root: string | null; gemini_api_key: string | null; nick: string | null }>({
-    ksp_root: null,
-    gemini_api_key: null,
-    nick: null,
-  });
+  let settings = $state<{ ksp_root: string | null; gemini_api_key: string | null; nick: string | null }>(
+    { ksp_root: null, gemini_api_key: null, nick: null },
+  );
 
-  async function refresh() {
-    loading = "스캔 중…";
-    error = "";
-    try {
+  async function refresh(force = false) {
+    await withBusy(force ? "재스캔 중…" : "로드 중…", async () => {
       status = await invoke("game_status");
-      units = await invoke("scan_units");
+      units = await invoke("scan_units", { force });
       try {
         const idx: any = await invoke("db_index");
         dbPacks = new Map(idx.packs.map((p: any) => [p.modId, p.variants]));
       } catch (e) {
-        // DB 접근 실패는 치명적이지 않음 (오프라인)
         console.warn("DB 인덱스 실패", e);
       }
-    } catch (e) {
-      error = String(e);
-    } finally {
-      loading = "";
-    }
+    });
   }
 
   async function toggleLanguage() {
     const target = status?.language === "ko" ? "en-us" : "ko";
     await invoke("set_language", { lang: target });
     status = await invoke("game_status");
-    toast = `언어: ${target} (게임 재시작 필요)`;
+    toast(`언어: ${target} (게임 재시작 필요)`);
   }
 
   async function installFromDb(modId: string) {
-    loading = `${modId} 설치 중…`;
-    try {
+    await withBusy(`${modId} 설치 중…`, async () => {
       await invoke("install_from_db", { modId, variant: null });
-      toast = `${modId} 설치 완료`;
-      await refresh();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      loading = "";
-    }
+      toast(`${modId} 설치 완료`);
+      units = await invoke("scan_units", { force: false });
+    });
   }
 
   async function removePack(modId: string) {
     await invoke("remove_pack", { modId });
-    toast = `${modId} 제거됨`;
-    await refresh();
+    toast(`${modId} 제거됨`);
+    units = await invoke("scan_units", { force: false });
   }
 
   async function translate(modId: string) {
     translating = modId;
     progress = { done: 0, total: 0, cost: 0 };
     result = null;
-    error = "";
     try {
       result = await invoke("translate_mod", { modId });
     } catch (e) {
-      error = String(e);
+      toast(String(e), "err", 12000);
       translating = null;
     }
+  }
+
+  async function runBatch(ids: string[]) {
+    if (ids.length === 0) return;
+    batch = ids.map((m) => ({ mod_id: m, status: "대기", detail: "" }));
+    batchTotalCost = 0;
+    try {
+      await invoke("translate_batch", { modIds: ids });
+      toast(`일괄 번역 완료 (${ids.length}개 모드, $${batchTotalCost.toFixed(4)})`);
+      selected = {};
+      units = await invoke("scan_units", { force: false });
+    } catch (e) {
+      toast(String(e), "err", 12000);
+    }
+  }
+
+  function untranslatedIds(): string[] {
+    return units.filter((u) => !u.installed).map((u) => u.mod_id);
   }
 
   async function installResult() {
     if (!result) return;
     await invoke("install_local_pack", { packDir: result.pack_dir });
-    toast = "번역 팩 설치 완료 (게임 재시작 필요)";
+    toast("번역 팩 설치 완료 (게임 재시작 필요)");
     translating = null;
     result = null;
-    await refresh();
+    units = await invoke("scan_units", { force: false });
   }
 
   async function shareResult() {
     if (!result) return;
-    loading = "공유 중…";
-    try {
-      const prUrl: string = await invoke("share_pack_cmd", { packDir: result.pack_dir });
-      toast = `공유 완료! ${prUrl}`;
-    } catch (e) {
-      error = String(e);
-    } finally {
-      loading = "";
-    }
+    await withBusy("공유 중…", async () => {
+      const prUrl: string = await invoke("share_pack_cmd", { packDir: result!.pack_dir });
+      toast(`공유 완료! ${prUrl}`, "ok", 15000);
+    });
   }
 
   async function openKeyEditor(modId: string) {
-    loading = `${modId} 키 로드 중…`;
     keyErrors = [];
     keyFilter = "";
     keyLimit = 300;
-    try {
-      const keys: ModKey[] = await invoke("get_mod_keys", { modId });
-      keyEditor = { modId, keys };
-    } catch (e) {
-      error = String(e);
-    } finally {
-      loading = "";
-    }
+    const keys = await withBusy(`${modId} 키 로드 중…`, () =>
+      invoke<ModKey[]>("get_mod_keys", { modId }),
+    );
+    if (keys) keyEditor = { modId, keys };
   }
 
   function filteredKeys(): ModKey[] {
@@ -178,7 +212,6 @@
     keySaving = true;
     keyErrors = [];
     try {
-      // 현재 값(기존 번역 유지 + 편집 반영) 전체를 보낸다
       const edits = keyEditor.keys
         .map((k) => ({ key: k.key, ko: (k.edited ?? k.ko ?? "").trim() }))
         .filter((e) => e.ko.length > 0);
@@ -189,9 +222,9 @@
       if (r.errors.length > 0) {
         keyErrors = r.errors;
       } else {
-        toast = `${keyEditor.modId} 저장·설치 완료 (${edits.length}키, 게임 재시작 필요)`;
+        toast(`${keyEditor.modId} 저장·설치 완료 (${edits.length}키, 게임 재시작 필요)`);
         keyEditor = null;
-        await refresh();
+        units = await invoke("scan_units", { force: false });
       }
     } catch (e) {
       keyErrors = [String(e)];
@@ -203,14 +236,45 @@
   async function saveSettings() {
     await invoke("save_settings", { settings });
     showSettings = false;
-    toast = "설정 저장됨";
+    toast("설정 저장됨");
     await refresh();
   }
 
   onMount(async () => {
     settings = await invoke("load_settings");
-    await listen<{ done: number; total: number; cost: number }>("translate-progress", (e) => {
-      progress = e.payload;
+    await listen<{ mod_id: string; done: number; total: number; cost: number }>(
+      "translate-progress",
+      (e) => {
+        progress = e.payload;
+        if (batch) {
+          const row = batch.find((r) => r.mod_id === e.payload.mod_id);
+          if (row) {
+            row.status = "진행";
+            row.detail = `${e.payload.done}/${e.payload.total} — $${e.payload.cost.toFixed(4)}`;
+          }
+        }
+      },
+    );
+    await listen<{
+      mod_id: string;
+      ok: number;
+      review: number;
+      failed: number;
+      cost: number;
+      error: string | null;
+      installed: boolean;
+    }>("batch-mod-done", (e) => {
+      if (!batch) return;
+      const row = batch.find((r) => r.mod_id === e.payload.mod_id);
+      if (!row) return;
+      if (e.payload.error) {
+        row.status = "오류";
+        row.detail = e.payload.error;
+      } else {
+        row.status = "완료";
+        batchTotalCost += e.payload.cost;
+        row.detail = `${e.payload.ok}키 · $${e.payload.cost.toFixed(4)}${e.payload.installed ? " · 설치됨" : ""}${e.payload.review > 0 ? ` · 검수 ${e.payload.review}` : ""}`;
+      }
     });
     await refresh();
   });
@@ -221,29 +285,54 @@
     <h1>KerbaLoc 스튜디오</h1>
     <div class="header-actions">
       {#if status}
-        <span class="root" title={status.root}>KSP 감지됨</span>
         <button class="lang" onclick={toggleLanguage}>
           한국어 {status.language === "ko" ? "ON" : "OFF"}
         </button>
       {/if}
       <button onclick={() => (showSettings = true)}>설정</button>
-      <button onclick={refresh}>새로고침</button>
+      <button disabled={busy} onclick={() => refresh(true)}>재스캔</button>
     </div>
   </header>
 
-  {#if error}<div class="error">{error} <button onclick={() => (error = "")}>×</button></div>{/if}
-  {#if toast}<div class="toast">{toast} <button onclick={() => (toast = "")}>×</button></div>{/if}
-  {#if loading}<div class="loading">{loading}</div>{/if}
+  <div class="bulk-bar">
+    <button
+      class="primary"
+      disabled={busy || selectedIds().length === 0}
+      onclick={() => runBatch(selectedIds())}
+    >
+      선택 번역 ({selectedIds().length})
+    </button>
+    <button disabled={busy} onclick={() => runBatch(untranslatedIds())}>
+      미설치 전체 번역 ({untranslatedIds().length})
+    </button>
+  </div>
 
   <table>
     <thead>
-      <tr><th>모드</th><th>버전</th><th>키수</th><th>상태</th><th>액션</th></tr>
+      <tr>
+        <th class="chk">
+          <input
+            type="checkbox"
+            onchange={(e) => {
+              const on = (e.target as HTMLInputElement).checked;
+              const next: Record<string, boolean> = {};
+              if (on) for (const u of units) next[u.mod_id] = true;
+              selected = next;
+            }}
+          />
+        </th>
+        <th>모드</th><th>버전</th><th>키수</th><th>상태</th><th>액션</th>
+      </tr>
     </thead>
     <tbody>
       {#each units as u (u.mod_id)}
         {@const variants = dbPacks.get(u.mod_id) ?? []}
         {@const fresh = variants.some((v) => v.srcSha256 === u.source_hash)}
         <tr class="row" onclick={() => openKeyEditor(u.mod_id)}>
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <td class="chk" onclick={(e) => e.stopPropagation()}>
+            <input type="checkbox" bind:checked={selected[u.mod_id]} />
+          </td>
           <td title={u.mod_id}>{u.display_name}</td>
           <td>{u.version ?? "-"}</td>
           <td class="num">{u.keys}</td>
@@ -267,6 +356,17 @@
   </table>
 </main>
 
+<!-- 토스트 스택 -->
+<div class="toast-stack">
+  {#each toasts as t (t.id)}
+    <div class="toast-item {t.kind}">
+      {#if t.kind === "busy"}<span class="spinner"></span>{/if}
+      <span class="toast-msg">{t.msg}</span>
+      <button class="toast-x" onclick={() => dismiss(t.id)}>×</button>
+    </div>
+  {/each}
+</div>
+
 {#if translating}
   <div class="modal-backdrop">
     <div class="modal">
@@ -286,10 +386,9 @@
                 <div class="key">{r.key}</div>
                 <div class="en">{r.en}</div>
                 <div class="violations">{r.violations.join(" / ")}</div>
-                <input placeholder={r.candidates.at(-1) ?? "번역 입력"} bind:value={r.edited} />
               </div>
             {/each}
-            <p class="hint">검수 항목은 v1에서는 팩에서 제외됩니다 (영어 폴백 — 안전).</p>
+            <p class="hint">검수 항목은 팩에서 제외됩니다(영어 폴백). 설치 후 키 에디터에서 수정하세요.</p>
           </div>
         {/if}
         <div class="modal-actions">
@@ -298,6 +397,35 @@
           <button onclick={() => { translating = null; result = null; }}>닫기</button>
         </div>
       {/if}
+    </div>
+  </div>
+{/if}
+
+{#if batch}
+  <div class="modal-backdrop">
+    <div class="modal wide">
+      <h2>일괄 번역 ({batch.filter((r) => r.status === "완료").length}/{batch.length}) — 누적 ${batchTotalCost.toFixed(4)}</h2>
+      <div class="key-table">
+        <table>
+          <thead><tr><th>모드</th><th style="width:12%">상태</th><th>상세</th></tr></thead>
+          <tbody>
+            {#each batch as r (r.mod_id)}
+              <tr>
+                <td>{r.mod_id}</td>
+                <td><span class="badge {r.status === '완료' ? 'ok' : r.status === '오류' ? 'err' : r.status === '진행' ? 'db' : 'none'}">{r.status}</span></td>
+                <td class="key-en">{r.detail}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button
+          disabled={batch.some((r) => r.status === "대기" || r.status === "진행")}
+          onclick={() => (batch = null)}
+        >닫기</button>
+        <span class="hint">모드 단위 순차 실행 — 성공한 팩은 즉시 게임에 설치됩니다.</span>
+      </div>
     </div>
   </div>
 {/if}
@@ -376,38 +504,38 @@
 
 <style>
   :global(body) { margin: 0; font-family: "Segoe UI", "Malgun Gothic", sans-serif; background: #14161a; color: #e6e6e6; }
-  main { max-width: 960px; margin: 0 auto; padding: 1rem; }
+  main { max-width: 1000px; margin: 0 auto; padding: 1rem; }
   header { display: flex; justify-content: space-between; align-items: center; }
   h1 { font-size: 1.3rem; }
   .header-actions { display: flex; gap: 0.5rem; align-items: center; }
-  .root { color: #7a8; font-size: 0.85rem; }
   button { background: #2a2e35; color: #e6e6e6; border: 1px solid #444; border-radius: 6px; padding: 0.35rem 0.8rem; cursor: pointer; }
-  button:hover { background: #353a43; }
+  button:hover:not(:disabled) { background: #353a43; }
+  button:disabled { opacity: 0.5; cursor: default; }
   button.primary { background: #2b5cab; border-color: #3a6fc4; }
   button.lang { background: #244; }
+  .bulk-bar { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
   th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #2a2e35; font-size: 0.9rem; }
+  th.chk, td.chk { width: 2rem; }
   td.num { text-align: right; }
   td.actions { display: flex; gap: 0.3rem; }
   .badge { padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.78rem; }
   .badge.ok { background: #1d4028; color: #8fdba3; }
   .badge.db { background: #1d3350; color: #8fbadb; }
   .badge.none { background: #333; color: #999; }
+  .badge.err { background: #4a1d1d; color: #db8f8f; }
   .error { background: #4a1d1d; padding: 0.6rem; border-radius: 6px; margin-top: 0.6rem; white-space: pre-wrap; }
-  .toast { background: #1d4028; padding: 0.6rem; border-radius: 6px; margin-top: 0.6rem; word-break: break-all; }
-  .loading { color: #8fbadb; margin-top: 0.6rem; }
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; }
   .modal { background: #1b1e24; border: 1px solid #333; border-radius: 10px; padding: 1.2rem; width: min(640px, 90vw); max-height: 85vh; overflow-y: auto; }
   progress { width: 100%; }
   label { display: block; margin: 0.6rem 0; font-size: 0.9rem; }
   label input { width: 100%; box-sizing: border-box; margin-top: 0.25rem; background: #14161a; color: #e6e6e6; border: 1px solid #444; border-radius: 6px; padding: 0.4rem; }
-  .modal-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+  .modal-actions { display: flex; gap: 0.5rem; margin-top: 1rem; align-items: center; }
   .review { border: 1px solid #333; border-radius: 8px; padding: 0.6rem; margin-top: 0.6rem; }
   .review-item { border-bottom: 1px solid #2a2e35; padding: 0.5rem 0; }
   .review-item .key { font-family: monospace; color: #8fbadb; font-size: 0.8rem; }
   .review-item .en { margin: 0.2rem 0; }
   .review-item .violations { color: #db8f8f; font-size: 0.8rem; }
-  .review-item input { width: 100%; box-sizing: border-box; background: #14161a; color: #e6e6e6; border: 1px solid #444; border-radius: 6px; padding: 0.35rem; }
   .hint { color: #999; font-size: 0.8rem; }
   tr.row { cursor: pointer; }
   tr.row:hover { background: #1d2128; }
@@ -420,4 +548,16 @@
   .key-en { font-size: 0.85rem; color: #bbb; word-break: break-word; }
   input.key-ko { width: 100%; box-sizing: border-box; background: #14161a; color: #e6e6e6; border: 1px solid #3a3f48; border-radius: 6px; padding: 0.3rem; }
   button.more { width: 100%; margin: 0.4rem 0; }
+  /* 토스트 */
+  .toast-stack { position: fixed; right: 1rem; bottom: 1rem; display: flex; flex-direction: column; gap: 0.5rem; z-index: 100; max-width: min(420px, 90vw); }
+  .toast-item { display: flex; align-items: center; gap: 0.5rem; background: #23272f; border: 1px solid #3a3f48; border-left: 4px solid #666; border-radius: 8px; padding: 0.55rem 0.7rem; box-shadow: 0 4px 16px rgba(0,0,0,0.4); animation: toast-in 0.15s ease-out; }
+  .toast-item.ok { border-left-color: #4caf7a; }
+  .toast-item.err { border-left-color: #d05555; }
+  .toast-item.busy { border-left-color: #4a86d0; }
+  .toast-item.info { border-left-color: #888; }
+  .toast-msg { flex: 1; font-size: 0.85rem; word-break: break-all; }
+  .toast-x { background: none; border: none; padding: 0 0.2rem; color: #888; font-size: 1rem; }
+  .spinner { width: 14px; height: 14px; border: 2px solid #4a86d0; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 </style>

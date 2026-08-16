@@ -13,13 +13,13 @@ pub enum IdSource {
     Folder,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VersionInfo {
     pub raw: Option<String>,
     pub source: &'static str, // "ckan" | "avc" | "unknown"
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModUnit {
     pub mod_id: String,
     pub id_source: IdSource,
