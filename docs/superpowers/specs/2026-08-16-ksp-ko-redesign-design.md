@@ -260,7 +260,7 @@ translation-db/
 - [x] Lingoona `setLanguage("ko")`가 실게임에서 조용히 통과하는가 → **확인됨** (프리즈/크래시 없음)
 - [ ] 스팀 클라우드/런처(`Launcher.exe`)가 buildID64.txt를 덮어쓰는 경우가 있는가 (장기 관찰)
 - [ ] `#autoLOC` 폴백이 파트 로딩 시점(TranslateBranch)에도 일관되게 동작하는가 (스톡 사전 복원 후 재검 대기)
-- [ ] 구방식 CRP 프리즈의 정확한 소비자 코드 (산출물 소실로 미특정 — 재현 테스트로 확인, 재현 안 되면 구방식 특유 문제로 종결)
+- [x] 구방식 CRP 프리즈의 정확한 소비자 코드 → **완전 특정** (부록 G, 2026-08-16 실게임 재현): `PartResourceDefinition.GetShortName()`의 `displayName.Substring(0, 2)` — 번역 손상으로 displayName이 빈 문자열/2자 미만이 되면 예외 → GameDatabase 로딩 코루틴 사망 → 프리즈. 예외는 KSP.log가 아닌 Player.log에만 기록됨. 검증기에 `displayname-too-short` 오류 규칙 추가로 방어. 전량 번역 자체는 무해함도 실증(테스트 ①).
 
 ### 설계상 인지된 제약 (해소 불가 또는 후순위)
 - **플러그인 DLL에 하드코딩된 영어 문자열**은 어느 방식으로도 번역 불가 (Harmony 패치는 범위 외). 팩 커버리지 표시에서 "코드 문자열 제외"임을 명시.

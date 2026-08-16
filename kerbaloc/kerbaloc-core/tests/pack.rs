@@ -77,6 +77,38 @@ fn token_check_against_source() {
 }
 
 #[test]
+fn displayname_shorter_than_2_chars_is_error() {
+    // PartResourceDefinition.GetShortName()이 displayName.Substring(0, 2)를 호출하므로
+    // 2자 미만 displayName은 로딩 프리즈를 유발한다 (2026-08-16 실게임 재현: Karbonite).
+    use std::collections::BTreeMap;
+    let d = tempfile::tempdir().unwrap();
+    fs::create_dir_all(d.path().join("Localization")).unwrap();
+    let meta = PackMeta {
+        schema: "kerbaloc/pack@1".to_string(),
+        lang: "ko".to_string(),
+        mod_id: "TestMod".to_string(),
+        variant_id: "2026-08-16-manual-test".to_string(),
+        src_sha256: format!("v1:sha256:{}", "0".repeat(64)),
+        keys_translated: 1,
+        keys_target: 1,
+    };
+    fs::write(
+        d.path().join("pack.json"),
+        serde_json::to_string_pretty(&meta).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        d.path().join("Localization/ko.cfg"),
+        "Localization\n{\n\tko\n\t{\n\t\t#LOC_X_Ore_DisplayName = 광\n\t}\n}\n",
+    )
+    .unwrap();
+    let mut src = BTreeMap::new();
+    src.insert("#LOC_X_Ore_DisplayName".to_string(), "Ore".to_string());
+    let r = validate_pack(d.path(), Some(&src));
+    assert!(r.errors.iter().any(|e| e.contains("2자")), "{:?}", r.errors);
+}
+
+#[test]
 fn install_and_remove() {
     let ksp = tempfile::tempdir().unwrap();
     fs::create_dir_all(ksp.path().join("GameData")).unwrap();
