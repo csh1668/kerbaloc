@@ -98,7 +98,7 @@
 | 다운로드 | GitHub raw/zip — 키/계정 불필요 |
 | 다국어 | 구조는 다국어 지원, 1차 지원·도구 UI는 한국어만 (피드백 1) |
 | 명칭 | KerbaLoc (도구 `kerbaloc` / 폴더 `GameData/KerbaLoc` / DB `kerbaloc-db`) |
-| 봇 자격증명 | 조직 레포 + fine-grained PAT (부록 C의 경로 a — GitHub App은 추후 전환 여지) |
+| 봇 자격증명 | ~~조직 레포 + PAT~~ → **A′안으로 개정** (부록 H, 2026-08-16): **운영자 개인 public 레포 + 본인 무기한 fine-grained PAT** (레포 1개 스코프). 조직·봇 계정·90일 로테이션 전부 불필요 — 무기한 FG PAT는 정식 허용이며 이를 막는 건 조직 정책뿐. PAT/App 토큰 PR은 CI 자동 실행 확인됨 |
 
 ## 전체 구조
 
