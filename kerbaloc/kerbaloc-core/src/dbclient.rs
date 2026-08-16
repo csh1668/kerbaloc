@@ -76,7 +76,10 @@ pub async fn fetch_manifest() -> anyhow::Result<Manifest> {
         resp.status()
     );
     let m: Manifest = resp.json().await?;
-    anyhow::ensure!(m.schema == "kerbaloc/manifest@1", "알 수 없는 manifest 스키마");
+    anyhow::ensure!(
+        m.schema == "kerbaloc/manifest@1",
+        "알 수 없는 manifest 스키마"
+    );
     Ok(m)
 }
 

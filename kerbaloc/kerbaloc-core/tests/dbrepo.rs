@@ -3,11 +3,11 @@ use std::fs;
 
 fn make_repo() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
-    for (variant, val) in [("2026-08-16-manual-a", "안녕"), ("2026-08-17-gemini-b", "여보세요")] {
-        let vd = d
-            .path()
-            .join("packs/TestMod/ko/variants")
-            .join(variant);
+    for (variant, val) in [
+        ("2026-08-16-manual-a", "안녕"),
+        ("2026-08-17-gemini-b", "여보세요"),
+    ] {
+        let vd = d.path().join("packs/TestMod/ko/variants").join(variant);
         fs::create_dir_all(vd.join("Localization")).unwrap();
         fs::write(
             vd.join("pack.json"),
@@ -53,7 +53,9 @@ fn validate_repo_passes_good_and_fails_broken() {
     let r = validate_repo(d.path());
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     // mod_id ≠ 경로 → 오류
-    let bad = d.path().join("packs/OtherMod/ko/variants/2026-08-16-manual-x");
+    let bad = d
+        .path()
+        .join("packs/OtherMod/ko/variants/2026-08-16-manual-x");
     fs::create_dir_all(bad.join("Localization")).unwrap();
     fs::write(
         bad.join("pack.json"),

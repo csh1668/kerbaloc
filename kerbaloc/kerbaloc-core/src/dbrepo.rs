@@ -120,8 +120,9 @@ pub fn validate_repo(repo_dir: &Path) -> ValidationReport {
     for (mod_id, variant_id, dir) in variants {
         let prefix = format!("packs/{mod_id}/.../{variant_id}");
         if !re.is_match(&variant_id) {
-            r.errors
-                .push(format!("{prefix}: variantId 형식 위반 (YYYY-MM-DD-method-nick)"));
+            r.errors.push(format!(
+                "{prefix}: variantId 형식 위반 (YYYY-MM-DD-method-nick)"
+            ));
         }
         match std::fs::read_to_string(dir.join("pack.json"))
             .map_err(|e| e.to_string())
@@ -133,8 +134,10 @@ pub fn validate_repo(repo_dir: &Path) -> ValidationReport {
             }
             Ok(meta) => {
                 if meta.mod_id != mod_id {
-                    r.errors
-                        .push(format!("{prefix}: mod_id({}) ≠ 디렉터리({mod_id})", meta.mod_id));
+                    r.errors.push(format!(
+                        "{prefix}: mod_id({}) ≠ 디렉터리({mod_id})",
+                        meta.mod_id
+                    ));
                 }
                 if meta.variant_id != variant_id {
                     r.errors.push(format!(

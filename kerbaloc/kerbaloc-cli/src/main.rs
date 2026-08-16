@@ -143,7 +143,10 @@ fn cmd_db(root: &std::path::Path, cmd: DbCmd) -> anyhow::Result<()> {
                         .ok_or_else(|| anyhow::anyhow!("변형 {id} 없음"))?,
                     None => p.variants.last().expect("변형 최소 1개"),
                 };
-                println!("다운로드: {}/{} ({}키)", p.mod_id, v.variant_id, v.keys_translated);
+                println!(
+                    "다운로드: {}/{} ({}키)",
+                    p.mod_id, v.variant_id, v.keys_translated
+                );
                 kerbaloc_core::dbclient::download_variant(&m, v, tmp.path()).await?;
                 anyhow::Ok(tmp.path().to_path_buf())
             })?;
