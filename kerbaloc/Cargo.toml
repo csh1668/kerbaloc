@@ -1,5 +1,5 @@
 [workspace]
-members = ["kerbaloc-core", "kerbaloc-cli"]
+members = ["kerbaloc-core", "kerbaloc-cli", "kerbaloc-app/src-tauri"]
 resolver = "2"
 
 [workspace.package]

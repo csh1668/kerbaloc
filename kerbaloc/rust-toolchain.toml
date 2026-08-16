@@ -1,0 +1,3 @@
+# Tauri/WebView2가 MSVC 링커를 요구하므로 워크스페이스 전체를 MSVC로 고정.
+[toolchain]
+channel = "stable-x86_64-pc-windows-msvc"
