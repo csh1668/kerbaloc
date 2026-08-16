@@ -1,6 +1,7 @@
 pub mod avc;
 pub mod cfg;
 pub mod ckan;
+pub mod doctor;
 pub mod game;
 pub mod hash;
 pub mod loc;

@@ -22,6 +22,11 @@ enum Cmd {
     Disable,
     /// GameData 스캔: 번역 대상 모드 목록
     Scan,
+    /// 구방식 번역 오염(en-us 노드 내 한글) 감지 및 백업
+    Doctor {
+        #[arg(long)]
+        backup: Option<PathBuf>,
+    },
 }
 
 fn resolve_root(cli_root: Option<PathBuf>) -> PathBuf {
@@ -77,6 +82,28 @@ fn main() {
                 );
             }
             println!("총 {}개 유닛", units.len());
+        }
+        Cmd::Doctor { backup } => {
+            let items = kerbaloc_core::doctor::detect_pollution(&root);
+            if items.is_empty() {
+                println!("오염 없음 — en-us 노드에 한글이 든 파일이 없습니다.");
+            } else {
+                for it in &items {
+                    println!(
+                        "{}  ({}/{}키 한글)",
+                        it.path.display(),
+                        it.korean_values,
+                        it.total
+                    );
+                }
+                println!("총 {}개 파일이 구방식 번역으로 오염되어 있습니다.", items.len());
+                if let Some(zip) = backup {
+                    let n = kerbaloc_core::doctor::backup_polluted(&root, &zip, &items)
+                        .expect("백업 실패");
+                    println!("{n}개 파일을 {}에 백업했습니다.", zip.display());
+                }
+                println!("복원 방법: Squad/SquadExpansion → Steam 무결성 검사, 모드 → CKAN 재설치 또는 재다운로드.");
+            }
         }
     }
 }
