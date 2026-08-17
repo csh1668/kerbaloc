@@ -55,6 +55,14 @@ pub trait Provider: Send + Sync {
         context: &str,
         payload: &str,
     ) -> (anyhow::Result<Vec<TranslatedItem>>, Usage);
+
+    /// 범용 텍스트 완성 — 용어집 분류 등 번역 외 호출용.
+    async fn complete(&self, _system: &str, _user: &str) -> (anyhow::Result<String>, Usage) {
+        (
+            Err(anyhow::anyhow!("이 제공자는 complete를 지원하지 않습니다")),
+            Usage::default(),
+        )
+    }
 }
 
 /// 모델 텍스트 출력에서 JSON 배열 추출 — 코드펜스·설명문 감싸기에 관대.

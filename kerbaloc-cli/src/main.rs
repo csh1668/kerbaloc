@@ -234,6 +234,9 @@ fn cmd_translate(
             "설치본에서 {mod_id}를 찾지 못했습니다. `kerbaloc scan`으로 ModId를 확인하세요."
         );
     };
+    if let Some(b) = kerbaloc_core::blacklist::check(&unit.entries) {
+        anyhow::bail!("번역 차단된 모드({}): {}", b.name, b.reason);
+    }
     println!(
         "{}: {}키, 소스 {}",
         unit.mod_id,

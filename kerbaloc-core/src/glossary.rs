@@ -50,6 +50,20 @@ impl Glossary {
         Self::load_str(include_str!("../../glossary/core.ko.json")).expect("내장 용어집 파싱")
     }
 
+    /// 모든 용어·별칭 소문자 목록 (모드 용어집 후보 추출 시 중복 제외용).
+    pub fn terms_lowercase(&self) -> Vec<String> {
+        self.0
+            .iter()
+            .flat_map(|e| std::iter::once(&e.en).chain(e.aliases.iter()))
+            .map(|t| t.to_lowercase())
+            .collect()
+    }
+
+    /// 모드 용어집 등 추가 항목 병합.
+    pub fn extend_entries(&mut self, extra: Vec<GlossaryEntry>) {
+        self.0.extend(extra);
+    }
+
     /// 대소문자 무시 + 단어 경계 매칭. 상한 60개.
     pub fn matches(&self, texts: &[&str]) -> Vec<&GlossaryEntry> {
         let joined = texts.join("\n");

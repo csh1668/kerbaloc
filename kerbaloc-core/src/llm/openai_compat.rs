@@ -110,4 +110,49 @@ impl Provider for OpenAiCompatProvider {
         }
         unreachable!()
     }
+
+    async fn complete(&self, system: &str, user: &str) -> (anyhow::Result<String>, Usage) {
+        let body = json!({
+            "model": self.model,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        });
+        let mut req = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&body);
+        if let Some(k) = &self.api_key {
+            req = req.bearer_auth(k);
+        }
+        let text = match req.send().await {
+            Ok(r) => match r.text().await {
+                Ok(t) => t,
+                Err(e) => return (Err(e.into()), Usage::default()),
+            },
+            Err(e) => return (Err(e.into()), Usage::default()),
+        };
+        let v: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => return (Err(e.into()), Usage::default()),
+        };
+        let usage = Usage {
+            input_tokens: v
+                .pointer("/usage/prompt_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: v
+                .pointer("/usage/completion_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        };
+        let out = v
+            .pointer("/choices/0/message/content")
+            .and_then(|x| x.as_str())
+            .map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("응답에 텍스트 없음: {text:.300}"));
+        (out, usage)
+    }
 }

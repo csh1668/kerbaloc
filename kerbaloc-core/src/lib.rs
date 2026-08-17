@@ -1,5 +1,6 @@
 pub mod avc;
 pub mod batching;
+pub mod blacklist;
 pub mod cfg;
 pub mod ckan;
 pub mod dbclient;
@@ -11,6 +12,7 @@ pub mod hash;
 pub mod jobstore;
 pub mod llm;
 pub mod loc;
+pub mod modglossary;
 pub mod pack;
 pub mod packgen;
 pub mod pipeline;

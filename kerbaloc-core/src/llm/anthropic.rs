@@ -110,4 +110,49 @@ impl Provider for AnthropicProvider {
         }
         unreachable!()
     }
+
+    async fn complete(&self, system: &str, user: &str) -> (anyhow::Result<String>, Usage) {
+        let body = json!({
+            "model": self.model,
+            "max_tokens": 8192,
+            "temperature": 0.2,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        });
+        let text = match self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(r) => match r.text().await {
+                Ok(t) => t,
+                Err(e) => return (Err(e.into()), Usage::default()),
+            },
+            Err(e) => return (Err(e.into()), Usage::default()),
+        };
+        let v: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => return (Err(e.into()), Usage::default()),
+        };
+        let usage = Usage {
+            input_tokens: v
+                .pointer("/usage/input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: v
+                .pointer("/usage/output_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        };
+        let out = v
+            .pointer("/content/0/text")
+            .and_then(|x| x.as_str())
+            .map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("응답에 텍스트 없음: {text:.300}"));
+        (out, usage)
+    }
 }

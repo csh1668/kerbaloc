@@ -136,4 +136,50 @@ impl Provider for GeminiProvider {
         }
         unreachable!()
     }
+
+    async fn complete(&self, system: &str, user: &str) -> (anyhow::Result<String>, Usage) {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            self.model
+        );
+        let body = json!({
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {"temperature": 0.2}
+        });
+        let resp = self
+            .client
+            .post(&url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await;
+        let text = match resp {
+            Ok(r) => match r.text().await {
+                Ok(t) => t,
+                Err(e) => return (Err(e.into()), Usage::default()),
+            },
+            Err(e) => return (Err(e.into()), Usage::default()),
+        };
+        let v: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => return (Err(e.into()), Usage::default()),
+        };
+        let usage = Usage {
+            input_tokens: v
+                .pointer("/usageMetadata/promptTokenCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: v
+                .pointer("/usageMetadata/candidatesTokenCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        };
+        let out = v
+            .pointer("/candidates/0/content/parts/0/text")
+            .and_then(|x| x.as_str())
+            .map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("응답에 텍스트 없음: {text:.300}"));
+        (out, usage)
+    }
 }

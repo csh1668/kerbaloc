@@ -1,0 +1,10 @@
+{
+  "schema": "kerbaloc/blacklist@1",
+  "mods": [
+    {
+      "name": "[x] Science!",
+      "key_prefixes": ["#LOC_xSci_"],
+      "reason": "로컬라이제이션 키의 ~40%가 로직 식별자(실험 ID 비교, 리플렉션 타입명, ConfigNode 저장 키, 모듈명, 리소스 경로). 번역 시 필터·DMagic 연동·설정 저장·바이옴 감지가 깨짐 — 소스 분석 기반 전체 차단."
+    }
+  ]
+}

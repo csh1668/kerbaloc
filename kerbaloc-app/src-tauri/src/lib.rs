@@ -1,7 +1,8 @@
 //! KerbaLoc 스튜디오 — kerbaloc-core를 Tauri 커맨드로 노출.
 
 use kerbaloc_core::{
-    dbclient, game, glossary::Glossary, jobstore::JobStore, pack, packgen, pipeline, scan, share,
+    dbclient, game, glossary::Glossary, jobstore::JobStore, modglossary, pack, packgen, pipeline,
+    scan, share,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -143,6 +144,8 @@ struct UnitInfo {
     keys: usize,
     source_hash: String,
     installed: bool,
+    /// 번역 차단 사유 (블랙리스트 모드면 Some)
+    blacklisted: Option<String>,
 }
 
 #[tauri::command]
@@ -168,6 +171,8 @@ fn scan_units(app: AppHandle, force: bool) -> Result<Vec<UnitInfo>, String> {
         .into_iter()
         .map(|u| UnitInfo {
             installed: installed_dir.join(&u.mod_id).is_dir(),
+            blacklisted: kerbaloc_core::blacklist::check(&u.entries)
+                .map(|b| b.reason.clone()),
             mod_id: u.mod_id,
             display_name: u.display_name,
             version: u.version.raw,
@@ -281,8 +286,15 @@ async fn translate_one(
     let provider = provider.as_ref();
 
     let unit = cached_unit(app, mod_id).map_err(fail0)?;
+    if let Some(b) = kerbaloc_core::blacklist::check(&unit.entries) {
+        return Err(fail0(format!("번역 차단된 모드({}): {}", b.name, b.reason)));
+    }
 
-    let glossary = Glossary::embedded_core();
+    let mut glossary = Glossary::embedded_core();
+    // 모드 용어집: 사용자 확정 항목만 병합해 프롬프트에 주입
+    if let Ok(mg) = modglossary::ModGlossary::load(&mod_glossary_path(&root, mod_id)) {
+        glossary.extend_entries(mg.confirmed_entries());
+    }
 
     // 재개: 같은 소스·모델의 잡이 있으면 이어서 (성공 청크 재번역 방지)
     let job_dir = root.join("KerbaLoc-jobs").join(&unit.mod_id);
@@ -610,6 +622,80 @@ fn save_mod_keys(
     })
 }
 
+fn mod_glossary_path(root: &std::path::Path, mod_id: &str) -> PathBuf {
+    root.join("KerbaLoc-glossaries").join(format!("{mod_id}.ko.json"))
+}
+
+/// 저장된 모드 용어집 로드 (없으면 빈 목록).
+#[tauri::command]
+fn get_mod_glossary(
+    app: AppHandle,
+    mod_id: String,
+) -> Result<Vec<modglossary::ModGlossaryEntry>, String> {
+    let root = resolve_root(&app)?;
+    Ok(modglossary::ModGlossary::load(&mod_glossary_path(&root, &mod_id))
+        .map(|g| g.entries)
+        .unwrap_or_default())
+}
+
+#[derive(Serialize)]
+struct GenGlossaryResult {
+    entries: Vec<modglossary::ModGlossaryEntry>,
+    cost: f64,
+}
+
+/// 용어집 초안 생성: 휴리스틱 후보 추출 → LLM 분류. 기존 항목은 유지하고
+/// 새 용어만 미확정(confirmed=false)으로 추가해 저장한다.
+#[tauri::command]
+async fn gen_mod_glossary(app: AppHandle, mod_id: String) -> Result<GenGlossaryResult, String> {
+    use kerbaloc_core::llm::create_provider;
+    let root = resolve_root(&app)?;
+    let settings = load_settings_inner(&app);
+    let cfg = settings.provider_config()?;
+    let provider = create_provider(&cfg).map_err(|e| e.to_string())?;
+    let unit = cached_unit(&app, &mod_id)?;
+
+    let path = mod_glossary_path(&root, &mod_id);
+    let mut existing = modglossary::ModGlossary::load(&path)
+        .map(|g| g.entries)
+        .unwrap_or_default();
+    let existing_terms: Vec<String> = existing.iter().map(|e| e.term.clone()).collect();
+
+    let core = Glossary::embedded_core();
+    let cands = modglossary::extract_candidates(&unit.entries, &core, &existing_terms);
+    let (r, usage) =
+        modglossary::classify_candidates(provider.as_ref(), &unit.display_name, &cands).await;
+    let new_entries = r.map_err(|e| e.to_string())?;
+    existing.extend(new_entries);
+
+    let g = modglossary::ModGlossary { version: 1, entries: existing };
+    g.save(&path).map_err(|e| e.to_string())?;
+    Ok(GenGlossaryResult {
+        entries: g.entries,
+        cost: usage.cost_usd(provider.prices().0, provider.prices().1),
+    })
+}
+
+/// 편집된 용어집 저장 — 저장 시점의 모든 항목을 확정으로 표시.
+#[tauri::command]
+fn save_mod_glossary(
+    app: AppHandle,
+    mod_id: String,
+    entries: Vec<modglossary::ModGlossaryEntry>,
+) -> Result<(), String> {
+    let root = resolve_root(&app)?;
+    let entries = entries
+        .into_iter()
+        .map(|mut e| {
+            e.confirmed = true;
+            e
+        })
+        .collect();
+    modglossary::ModGlossary { version: 1, entries }
+        .save(&mod_glossary_path(&root, &mod_id))
+        .map_err(|e| e.to_string())
+}
+
 /// 현재(저장 전 포함) 설정으로 제공자의 모델 목록 조회.
 #[tauri::command]
 async fn list_models_cmd(settings: Settings) -> Result<Vec<String>, String> {
@@ -730,6 +816,9 @@ pub fn run() {
             share_installed,
             get_mod_keys,
             save_mod_keys,
+            get_mod_glossary,
+            gen_mod_glossary,
+            save_mod_glossary,
             list_models_cmd,
             load_settings,
             save_settings,

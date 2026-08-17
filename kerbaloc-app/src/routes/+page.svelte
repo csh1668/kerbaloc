@@ -10,6 +10,7 @@
     keys: number;
     source_hash: string;
     installed: boolean;
+    blacklisted: string | null;
   }
   interface DbVariant {
     variantId: string;
@@ -140,6 +141,51 @@
   let keyLimit = $state(300);
   let keyErrors = $state<string[]>([]);
   let keySaving = $state(false);
+
+  // ── 모드 용어집 (키 에디터의 탭) ──
+  interface GlossEntry {
+    term: string;
+    policy: string; // keep | translate | translit
+    ko: string | null;
+    aliases?: string[];
+    why?: string | null;
+    count: number;
+    confirmed: boolean;
+  }
+  let editorTab = $state<"keys" | "glossary">("keys");
+  let modGlossary = $state<GlossEntry[]>([]);
+  let glossaryGenerating = $state(false);
+  let glossarySaving = $state(false);
+
+  async function genGlossary() {
+    if (!keyEditor) return;
+    glossaryGenerating = true;
+    try {
+      const r: { entries: GlossEntry[]; cost: number } = await invoke("gen_mod_glossary", {
+        modId: keyEditor.modId,
+      });
+      modGlossary = r.entries;
+      toast(`용어집 초안 ${r.entries.length}개 생성 (비용 $${r.cost.toFixed(4)})`);
+    } catch (e) {
+      toast(String(e), "err", 12000);
+    } finally {
+      glossaryGenerating = false;
+    }
+  }
+
+  async function saveGlossary() {
+    if (!keyEditor) return;
+    glossarySaving = true;
+    try {
+      await invoke("save_mod_glossary", { modId: keyEditor.modId, entries: modGlossary });
+      for (const e of modGlossary) e.confirmed = true;
+      toast("용어집 저장·확정 완료 — 다음 번역부터 반영됩니다");
+    } catch (e) {
+      toast(String(e), "err", 12000);
+    } finally {
+      glossarySaving = false;
+    }
+  }
 
   // ── 설정 ──
   interface AppSettings {
@@ -285,7 +331,7 @@
   }
 
   function untranslatedIds(): string[] {
-    return units.filter((u) => !u.installed).map((u) => u.mod_id);
+    return units.filter((u) => !u.installed && !u.blacklisted).map((u) => u.mod_id);
   }
 
   function installedIds(): string[] {
@@ -342,10 +388,19 @@
     keyErrors = [];
     keyFilter = "";
     keyLimit = 300;
+    editorTab = "keys";
+    modGlossary = [];
     const keys = await withBusy(`${modId} 키 로드 중…`, () =>
       invoke<ModKey[]>("get_mod_keys", { modId }),
     );
-    if (keys) keyEditor = { modId, keys };
+    if (keys) {
+      keyEditor = { modId, keys };
+      try {
+        modGlossary = await invoke("get_mod_glossary", { modId });
+      } catch (e) {
+        console.warn("용어집 로드 실패", e);
+      }
+    }
   }
 
   function filteredKeys(): ModKey[] {
@@ -498,7 +553,7 @@
             onchange={(e) => {
               const on = (e.target as HTMLInputElement).checked;
               const next: Record<string, boolean> = {};
-              if (on) for (const u of units) next[u.mod_id] = true;
+              if (on) for (const u of units) if (!u.blacklisted) next[u.mod_id] = true;
               selected = next;
             }}
           />
@@ -513,13 +568,14 @@
         <tr class="row" onclick={() => openKeyEditor(u.mod_id)}>
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <td class="chk" onclick={(e) => e.stopPropagation()}>
-            <input type="checkbox" bind:checked={selected[u.mod_id]} />
+            <input type="checkbox" disabled={!!u.blacklisted} bind:checked={selected[u.mod_id]} />
           </td>
           <td title={u.mod_id}>{u.display_name}</td>
           <td>{u.version ?? "-"}</td>
           <td class="num">{u.keys}</td>
           <td>
-            {#if u.installed}<span class="badge ok">설치됨</span>
+            {#if u.blacklisted}<span class="badge err" title={u.blacklisted}>번역 차단</span>
+            {:else if u.installed}<span class="badge ok">설치됨</span>
             {:else if variants.length > 0}<span class="badge db">DB {variants.length}변형{fresh ? "" : " (버전 다름)"}</span>
             {:else}<span class="badge none">미번역</span>{/if}
           </td>
@@ -642,49 +698,121 @@
   {@const shown = filteredKeys()}
   <div class="modal-backdrop">
     <div class="modal wide">
-      <h2>{keyEditor.modId} — 번역 키 ({keyEditor.keys.length}개)</h2>
-      <div class="key-toolbar">
-        <input placeholder="키·원문·번역 검색…" bind:value={keyFilter} />
-        <span class="hint">{shown.length}개 일치</span>
-      </div>
-      {#if keyErrors.length > 0}
-        <div class="error">{keyErrors.slice(0, 10).join("\n")}{keyErrors.length > 10 ? `\n… 외 ${keyErrors.length - 10}건` : ""}</div>
-      {/if}
-      <div class="key-table">
-        <table>
-          <thead>
-            <tr><th style="width:26%">키</th><th style="width:37%">원문</th><th style="width:37%">번역 (편집 가능)</th></tr>
-          </thead>
-          <tbody>
-            {#each shown.slice(0, keyLimit) as k (k.key)}
-              <tr>
-                <td class="key-name" title={k.key}>{k.key}</td>
-                <td class="key-en">{k.en}</td>
-                <td>
-                  <input
-                    class="key-ko"
-                    value={k.edited ?? k.ko ?? ""}
-                    placeholder="(미번역 — 영어 폴백)"
-                    oninput={(e) => (k.edited = (e.target as HTMLInputElement).value)}
-                  />
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        {#if shown.length > keyLimit}
-          <button class="more" onclick={() => (keyLimit += 500)}>
-            더 보기 ({shown.length - keyLimit}개 남음)
-          </button>
-        {/if}
-      </div>
-      <div class="modal-actions">
-        <button class="primary" disabled={keySaving} onclick={saveKeys}>
-          {keySaving ? "저장 중…" : "저장·게임에 설치"}
+      <h2>{keyEditor.modId}</h2>
+      <div class="tabs">
+        <button class="tab {editorTab === 'keys' ? 'active' : ''}" onclick={() => (editorTab = "keys")}>
+          번역 키 ({keyEditor.keys.length})
         </button>
-        <button onclick={() => (keyEditor = null)}>닫기</button>
-        <span class="hint">저장 시 검증 후 manual 팩으로 설치됩니다. 빈 칸은 영어 폴백.</span>
+        <button class="tab {editorTab === 'glossary' ? 'active' : ''}" onclick={() => (editorTab = "glossary")}>
+          용어집 ({modGlossary.length})
+        </button>
       </div>
+
+      {#if editorTab === "keys"}
+        <div class="key-toolbar">
+          <input placeholder="키·원문·번역 검색…" bind:value={keyFilter} />
+          <span class="hint">{shown.length}개 일치</span>
+        </div>
+        {#if keyErrors.length > 0}
+          <div class="error">{keyErrors.slice(0, 10).join("\n")}{keyErrors.length > 10 ? `\n… 외 ${keyErrors.length - 10}건` : ""}</div>
+        {/if}
+        <div class="key-table">
+          <table>
+            <thead>
+              <tr><th style="width:26%">키</th><th style="width:37%">원문</th><th style="width:37%">번역 (편집 가능)</th></tr>
+            </thead>
+            <tbody>
+              {#each shown.slice(0, keyLimit) as k (k.key)}
+                <tr>
+                  <td class="key-name" title={k.key}>{k.key}</td>
+                  <td class="key-en">{k.en}</td>
+                  <td>
+                    <input
+                      class="key-ko"
+                      value={k.edited ?? k.ko ?? ""}
+                      placeholder="(미번역 — 영어 폴백)"
+                      oninput={(e) => (k.edited = (e.target as HTMLInputElement).value)}
+                    />
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          {#if shown.length > keyLimit}
+            <button class="more" onclick={() => (keyLimit += 500)}>
+              더 보기 ({shown.length - keyLimit}개 남음)
+            </button>
+          {/if}
+        </div>
+        <div class="modal-actions">
+          <button class="primary" disabled={keySaving} onclick={saveKeys}>
+            {keySaving ? "저장 중…" : "저장·게임에 설치"}
+          </button>
+          <button onclick={() => (keyEditor = null)}>닫기</button>
+          <span class="hint">저장 시 검증 후 manual 팩으로 설치됩니다. 빈 칸은 영어 폴백.</span>
+        </div>
+      {:else}
+        <div class="key-toolbar">
+          <button disabled={glossaryGenerating} onclick={genGlossary}>
+            {glossaryGenerating ? "생성 중…" : "초안 생성 (LLM)"}
+          </button>
+          <span class="hint">원문에서 용어 후보를 추출·분류합니다. 저장한 항목만 번역 프롬프트에 주입됩니다.</span>
+        </div>
+        {#if modGlossary.length === 0}
+          <p class="hint">용어집이 비어 있습니다. "초안 생성"으로 시작하세요.</p>
+        {:else}
+          <div class="key-table">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:20%">용어</th>
+                  <th style="width:12%">정책</th>
+                  <th style="width:20%">한국어</th>
+                  <th style="width:34%">근거</th>
+                  <th style="width:7%">횟수</th>
+                  <th style="width:7%"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each modGlossary as g, i (g.term)}
+                  <tr>
+                    <td class="key-name" title={g.term}>
+                      {g.term}{#if !g.confirmed}<span class="badge none" title="저장 시 확정됩니다"> 초안</span>{/if}
+                    </td>
+                    <td>
+                      <select class="variant" bind:value={g.policy}>
+                        <option value="translate">번역</option>
+                        <option value="translit">음차</option>
+                        <option value="keep">영어 유지</option>
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        class="key-ko"
+                        bind:value={g.ko}
+                        disabled={g.policy === "keep"}
+                        placeholder={g.policy === "keep" ? "(영어 유지)" : "한국어"}
+                      />
+                    </td>
+                    <td class="key-en">{g.why ?? ""}</td>
+                    <td class="num">{g.count}</td>
+                    <td>
+                      <button onclick={() => (modGlossary = modGlossary.filter((_, j) => j !== i))}>×</button>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+        <div class="modal-actions">
+          <button class="primary" disabled={glossarySaving || modGlossary.length === 0} onclick={saveGlossary}>
+            {glossarySaving ? "저장 중…" : "저장·확정"}
+          </button>
+          <button onclick={() => (keyEditor = null)}>닫기</button>
+          <span class="hint">번역 정책인데 한국어가 비면 매칭 시 "(영어 유지)"로 주입됩니다.</span>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -812,6 +940,9 @@
   .model-row input { flex: 1; margin-top: 0; }
   .model-row button { white-space: nowrap; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.8rem; }
+  .tabs { display: flex; gap: 0.3rem; border-bottom: 1px solid #2a2e35; margin: 0.4rem 0 0.6rem; }
+  .tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 0.4rem 0.8rem; color: #999; }
+  .tab.active { color: #e6e6e6; border-bottom-color: #3a6fc4; }
   .modal-actions { display: flex; gap: 0.5rem; margin-top: 1rem; align-items: center; }
   .hint { color: #999; font-size: 0.8rem; }
   tr.row { cursor: pointer; }
