@@ -7,39 +7,93 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  build:
+  release:
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 릴리스 노트용 커밋 히스토리
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Python
-        run: uv python install
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: kerbaloc-app/package-lock.json
 
-      - name: Install dependencies
-        run: uv sync --dev
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: uv run pytest -v
+        run: cargo test --workspace
 
-      - name: Build exe with PyInstaller
-        run: uv run pyinstaller ksp-translator.spec --noconfirm
+      - name: Install frontend dependencies
+        working-directory: kerbaloc-app
+        run: npm ci
 
-      - name: Get short SHA
-        id: sha
+      # 버전: 0.1.<run_number> — 업데이터가 버전 비교로 갱신을 판단하므로 매 릴리스 증가 필수
+      - name: Compute version
+        id: ver
         shell: bash
-        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+        run: echo "version=0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      - name: Create Release
+      - name: Patch app version
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'kerbaloc-app/src-tauri/tauri.conf.json';
+            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+            c.version = '${{ steps.ver.outputs.version }}';
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+          "
+
+      # 릴리스 노트: 직전 릴리스 태그 이후의 커밋 목록
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          prev=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            range="$prev..HEAD"
+          else
+            range="HEAD"
+          fi
+          {
+            echo "body<<NOTES_EOF"
+            echo "## 변경 사항"
+            echo ""
+            git log $range --no-merges --pretty=format:"- %s (%h)"
+            echo ""
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and release Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: kerbaloc-app
+          tagName: v${{ steps.ver.outputs.version }}
+          releaseName: KerbaLoc v${{ steps.ver.outputs.version }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+
+      - name: Build CLI
+        run: cargo build --release -p kerbaloc-cli
+
+      - name: Attach CLI to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ steps.sha.outputs.short }}
-          name: Build ${{ steps.sha.outputs.short }}
-          body: |
-            Automated build from commit ${{ github.sha }}
-          files: dist/ksp-translator.exe
-          make_latest: true
+          tag_name: v${{ steps.ver.outputs.version }}
+          files: target/release/kerbaloc.exe

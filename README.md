@@ -26,12 +26,12 @@ KSP(Kerbal Space Program) 1.12.x 한국어화 도구 모음.
 
 ## 개발
 
-    cd kerbaloc && cargo test --workspace
+    cargo test --workspace
 
 - 설계 스펙: `docs/superpowers/specs/2026-08-16-ksp-ko-redesign-design.md` (+ appendix A–F)
-- 구현 계획: `docs/superpowers/plans/` (Plan 1/5 완료: core+CLI)
+- 구현 계획: `docs/superpowers/plans/`
 - 골든 데이터: `research/stock-dictionary/` (스톡 en-us/ja/zh-cn + Breaking Ground)
-- 구 Python 구현(`src/ksp_translator/`)은 참조용 — 신규 개발은 `kerbaloc/` Rust workspace
+- Rust workspace가 레포 루트 (`kerbaloc-core` / `kerbaloc-cli` / `kerbaloc-app`)
 
 ## 구성요소 (로드맵)
 
