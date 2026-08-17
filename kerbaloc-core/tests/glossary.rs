@@ -9,6 +9,13 @@ fn core() -> Glossary {
 }
 
 #[test]
+fn embedded_core_matches_file_version() {
+    let g = Glossary::embedded_core();
+    let hits = g.matches(&["Transfer Water to the tank"]);
+    assert!(hits.iter().any(|e| e.en == "Water"), "내장 용어집 동작");
+}
+
+#[test]
 fn loads_core_seed() {
     let g = core();
     let hits = g.matches(&["Transfer Water to the tank"]);

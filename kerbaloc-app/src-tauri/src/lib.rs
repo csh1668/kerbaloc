@@ -282,8 +282,7 @@ async fn translate_one(
 
     let unit = cached_unit(app, mod_id).map_err(fail0)?;
 
-    let gpath = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../glossary/core.ko.json");
-    let glossary = Glossary::load(&gpath).map_err(|e| fail0(e.to_string()))?;
+    let glossary = Glossary::embedded_core();
 
     // 재개: 같은 소스·모델의 잡이 있으면 이어서 (성공 청크 재번역 방지)
     let job_dir = root.join("KerbaLoc-jobs").join(&unit.mod_id);

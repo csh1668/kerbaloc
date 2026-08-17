@@ -32,14 +32,22 @@ const MAX_MATCHES: usize = 60;
 
 impl Glossary {
     pub fn load(path: &Path) -> anyhow::Result<Glossary> {
-        let text = std::fs::read_to_string(path)?;
-        let f: GlossaryFile = serde_json::from_str(&text)?;
+        Self::load_str(&std::fs::read_to_string(path)?)
+    }
+
+    pub fn load_str(text: &str) -> anyhow::Result<Glossary> {
+        let f: GlossaryFile = serde_json::from_str(text)?;
         anyhow::ensure!(
             f.schema == "kerbaloc/glossary@1",
             "알 수 없는 용어집 스키마: {}",
             f.schema
         );
         Ok(Glossary(f.entries))
+    }
+
+    /// 바이너리에 내장된 코어 용어집 — 배포된 exe에서 리포 경로 의존 제거.
+    pub fn embedded_core() -> Glossary {
+        Self::load_str(include_str!("../../glossary/core.ko.json")).expect("내장 용어집 파싱")
     }
 
     /// 대소문자 무시 + 단어 경계 매칭. 상한 60개.

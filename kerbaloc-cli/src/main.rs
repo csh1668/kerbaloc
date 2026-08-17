@@ -241,11 +241,7 @@ fn cmd_translate(
         &unit.source_hash[..22]
     );
 
-    // 용어집: 실행 파일 기준이 아니라 레포/설치 어느 쪽이든 — 우선 레포 경로, 없으면 스킵
-    let gpath =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../glossary/core.ko.json");
-    let glossary = Glossary::load(&gpath)
-        .map_err(|e| anyhow::anyhow!("코어 용어집 로드 실패({e}): {}", gpath.display()))?;
+    let glossary = Glossary::embedded_core(); // 바이너리 내장 — 배포 exe에서도 동작
 
     let provider = create_provider(&cfg)?;
     let provider = provider.as_ref();
