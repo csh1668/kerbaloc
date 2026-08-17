@@ -72,6 +72,20 @@ fn richtext_tags_must_balance() {
 }
 
 #[test]
+fn raw_control_chars_are_error() {
+    let errs = |src: &str, dst: &str| {
+        kerbaloc_core::validate::validate_translation(src, dst)
+            .into_iter()
+            .filter(|f| matches!(f.severity, kerbaloc_core::validate::Severity::Error))
+            .map(|f| f.rule)
+            .collect::<Vec<_>>()
+    };
+    assert!(errs("a\\nb", "한\n글").contains(&"raw-control"), "실제 줄바꿈");
+    assert!(errs("a", "한\t글").contains(&"raw-control"), "실제 탭");
+    assert!(!errs("a\\nb", "한\\n글").contains(&"raw-control"), "리터럴은 허용");
+}
+
+#[test]
 fn empty_translation_is_error() {
     assert!(errors("Hi", "  ").contains(&"empty".to_string()));
 }

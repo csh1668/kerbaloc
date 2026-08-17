@@ -76,6 +76,15 @@ pub fn make_manifest_with(
     }
 }
 
+/// LLM이 리터럴 \n·\t 대신 실제 제어문자를 내는 경우가 있다 — cfg 값은 한 줄이어야
+/// 하므로 리터럴로 정규화한다 (의도가 명백한 자동 수리).
+fn normalize_value(ko: &str) -> String {
+    ko.replace("\r\n", "\\n")
+        .replace('\n', "\\n")
+        .replace('\r', "\\n")
+        .replace('\t', "\\t")
+}
+
 /// 검증 결과: Ok(정상) / Err(오류 규칙 목록).
 fn check(key: &str, src: &str, dst: &str) -> Result<(), Vec<String>> {
     let errs: Vec<String> = validate_key_translation(key, src, dst)
@@ -121,6 +130,16 @@ pub async fn translate_job(
     progress: &(dyn Fn(usize, usize, f64) + Sync), // (완료 배치, 전체 배치, 누적 비용)
 ) -> anyhow::Result<TranslationReport> {
     let (already, base_usage, done_ids) = store.completed()?;
+    // 재개 정화: 과거 실행(다른 검증 규칙 시절 포함)이 남긴 기록을 현재 규칙으로
+    // 재검증 — 불량 키는 버려서 아래 pending 계산이 자동으로 재번역하게 한다.
+    let already: BTreeMap<String, String> = already
+        .into_iter()
+        .filter(|(k, ko)| {
+            entries
+                .get(k)
+                .is_some_and(|en| check(k, en, ko).is_ok())
+        })
+        .collect();
     let batches = batches_from_manifest(manifest, entries);
     let total_batches = batches.len();
     // 재개: 미완료 청크 전체 + 완료 청크 중 번역 안 된 키만 재시도
@@ -185,8 +204,10 @@ pub async fn translate_job(
                         }
                     }
                     Ok(out) => {
-                        let by_i: BTreeMap<usize, String> =
-                            out.into_iter().map(|t| (t.i, t.ko)).collect();
+                        let by_i: BTreeMap<usize, String> = out
+                            .into_iter()
+                            .map(|t| (t.i, normalize_value(&t.ko)))
+                            .collect();
                         for it in &items {
                             match by_i.get(&it.i) {
                                 None => unresolved.push(Unresolved {

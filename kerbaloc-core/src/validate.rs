@@ -44,6 +44,13 @@ pub fn validate_translation(src: &str, dst: &str) -> Vec<Finding> {
         out.push(find("empty", Severity::Error, "번역이 비어 있음".into()));
         return out;
     }
+    if dst.chars().any(|c| c == '\n' || c == '\r' || c == '\t') {
+        out.push(find(
+            "raw-control",
+            Severity::Error,
+            "실제 줄바꿈/탭 문자 — cfg 값에는 리터럴 \\n·\\t만 허용".into(),
+        ));
+    }
     if dst.contains('{') || dst.contains('}') {
         out.push(find(
             "raw-brace",

@@ -236,6 +236,73 @@ fn failed_requests_still_count_usage() {
 }
 
 #[test]
+fn raw_newline_output_is_normalized_to_literal() {
+    let e = entries(3);
+    // LLM이 실제 줄바꿈 문자를 반환 → 리터럴 \n으로 정규화되어 통과해야
+    let p = FakeProvider {
+        name: "fake".into(),
+        rule: Box::new(|it, _| Some(format!("한\n{}", it["en"].as_str().unwrap()))),
+        calls: AtomicUsize::new(0),
+    };
+    let d = tempfile::tempdir().unwrap();
+    let r = run(&e, &p, d.path(), 0).unwrap();
+    assert_eq!(r.ok.len(), 3);
+    for v in r.ok.values() {
+        assert!(!v.contains('\n'), "실제 줄바꿈 없음");
+        assert!(v.contains("\\n"), "리터럴로 변환됨");
+    }
+}
+
+#[test]
+fn poisoned_resume_cache_is_revalidated_and_retranslated() {
+    let e = entries(5);
+    let m = make_manifest("TestMod", "v1:sha256:x", "fake", (0.25, 1.50), &e);
+    let d = tempfile::tempdir().unwrap();
+    let store = JobStore::create(d.path(), &m).unwrap();
+    // 과거 실행이 남긴 오염 기록: 실제 줄바꿈 문자가 든 값 (당시 규칙은 통과시켰음)
+    let poisoned: Vec<(String, String)> = e
+        .iter()
+        .map(|(k, en)| (k.clone(), format!("한\n{en}")))
+        .collect();
+    store
+        .record(
+            &m.batches[0].0,
+            &poisoned,
+            &Usage { input_tokens: 10, output_tokens: 5 },
+        )
+        .unwrap();
+
+    let p = FakeProvider {
+        name: "fake".into(),
+        rule: good_rule(),
+        calls: AtomicUsize::new(0),
+    };
+    let g = glossary();
+    let r = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(translate_job(
+            &p,
+            &e,
+            &g,
+            "TestMod",
+            &store,
+            &m,
+            Arc::new(Semaphore::new(4)),
+            0,
+            &|_, _, _| {},
+        ))
+        .unwrap();
+    assert_eq!(r.ok.len(), 5, "오염 키 전부 재번역");
+    for v in r.ok.values() {
+        assert!(!v.contains('\n'), "재번역 결과에 실제 줄바꿈 없음");
+    }
+    assert!(
+        p.calls.load(Ordering::SeqCst) >= 1,
+        "재검증 실패분에 대해 LLM 재호출"
+    );
+}
+
+#[test]
 fn resume_reuses_recorded_batches_and_usage() {
     let e = entries(10);
     let m = make_manifest("TestMod", "v1:sha256:x", "fake", (0.25, 1.50), &e);
