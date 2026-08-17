@@ -74,26 +74,25 @@ jobs:
             echo "NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and release Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: kerbaloc-app
-          tagName: v${{ steps.ver.outputs.version }}
-          releaseName: KerbaLoc v${{ steps.ver.outputs.version }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
+      # 포터블 단일 exe — 인스톨러/번들 없이 실행 파일만 만든다
+      - name: Build app (portable exe)
+        working-directory: kerbaloc-app
+        run: npm run tauri build -- --no-bundle
 
-      - name: Build CLI
-        run: cargo build --release -p kerbaloc-cli
+      - name: Collect portable exe
+        shell: bash
+        run: |
+          if [ -f target/release/KerbaLoc.exe ]; then
+            cp target/release/KerbaLoc.exe KerbaLoc.exe
+          else
+            cp target/release/kerbaloc-app.exe KerbaLoc.exe
+          fi
 
-      - name: Attach CLI to release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
-          files: target/release/kerbaloc.exe
+          name: KerbaLoc v${{ steps.ver.outputs.version }}
+          body: ${{ steps.notes.outputs.body }}
+          files: KerbaLoc.exe
+          make_latest: true

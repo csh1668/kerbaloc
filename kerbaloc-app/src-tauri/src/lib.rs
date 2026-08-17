@@ -637,17 +637,75 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// 앱 시작 시 백그라운드로 업데이트 확인 — 새 버전이 있으면 동의 없이
-/// 자동 다운로드·설치 후 재시작한다.
+/// "0.1.12" 류 점 구분 숫자 버전 비교: a가 b보다 최신인가.
+fn version_newer(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.trim_start_matches('v')
+            .split('.')
+            .map(|p| p.trim().parse().unwrap_or(0))
+            .collect()
+    };
+    parse(a) > parse(b)
+}
+
+/// 포터블 단일 exe 자체 업데이트: GitHub 최신 릴리스의 KerbaLoc.exe가 더 새 버전이면
+/// 동의 없이 내려받아 자기 자신을 교체하고 재시작한다.
+/// (실행 중 exe는 rename 가능 — 구파일은 .old로 밀어두고 다음 시작 때 정리)
+async fn auto_update(handle: &AppHandle) -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let old = exe.with_extension("exe.old");
+    let _ = std::fs::remove_file(&old); // 이전 업데이트 잔여물 정리
+
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("kerbaloc-app/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    let rel: serde_json::Value = client
+        .get("https://api.github.com/repos/csh1668/kerbaloc/releases/latest")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let latest = rel
+        .get("tag_name")
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| anyhow::anyhow!("tag_name 없음"))?;
+    let current = handle.package_info().version.to_string();
+    if !version_newer(latest, &current) {
+        return Ok(());
+    }
+    let url = rel
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|a| a.get("name").and_then(|n| n.as_str()) == Some("KerbaLoc.exe"))
+        })
+        .and_then(|a| a.get("browser_download_url").and_then(|u| u.as_str()))
+        .ok_or_else(|| anyhow::anyhow!("릴리스에 KerbaLoc.exe 자산 없음"))?;
+    let bytes = client.get(url).send().await?.error_for_status()?.bytes().await?;
+    anyhow::ensure!(
+        bytes.len() > 1_000_000 && bytes.starts_with(b"MZ"),
+        "다운로드된 파일이 실행 파일이 아님"
+    );
+
+    let tmp = exe.with_extension("exe.new");
+    std::fs::write(&tmp, &bytes)?;
+    std::fs::rename(&exe, &old)?;
+    if let Err(e) = std::fs::rename(&tmp, &exe) {
+        let _ = std::fs::rename(&old, &exe); // 롤백
+        return Err(e.into());
+    }
+    std::process::Command::new(&exe).spawn()?;
+    handle.exit(0);
+    Ok(())
+}
+
 fn spawn_auto_update(app: &tauri::App) {
-    use tauri_plugin_updater::UpdaterExt;
     let handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
-        let Ok(updater) = handle.updater() else { return };
-        let Ok(Some(update)) = updater.check().await else { return };
-        if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
-            handle.restart();
-        }
+        let _ = auto_update(&handle).await; // 실패는 조용히 무시 — 다음 실행 때 재시도
     });
 }
 
@@ -655,8 +713,6 @@ fn spawn_auto_update(app: &tauri::App) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             spawn_auto_update(app);
             Ok(())
