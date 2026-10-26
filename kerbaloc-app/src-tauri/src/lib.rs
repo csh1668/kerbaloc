@@ -68,8 +68,9 @@ fn set_language(lang: String) -> Result<(), String> {
     game::set_language(&root, &lang).map_err(|e| e.to_string())
 }
 
+/// async: 스캔이 수 초 걸리므로 메인(UI) 스레드를 막지 않게 런타임 스레드에서 실행.
 #[tauri::command]
-fn scan_units(app: AppHandle, force: bool) -> Result<Vec<UnitInfo>, String> {
+async fn scan_units(app: AppHandle, force: bool) -> Result<Vec<UnitInfo>, String> {
     let root = resolve_root()?;
     let installed_dir = root.join("GameData").join("KerbaLoc").join("ko");
     Ok(cached_units(&app, force)?
@@ -621,6 +622,10 @@ async fn auto_update(handle: &AppHandle) -> anyhow::Result<()> {
 }
 
 fn spawn_auto_update(app: &tauri::App) {
+    // 개발 빌드(tauri dev)는 버전이 0.1.0이라 릴리스 exe로 자기 자신을 덮어쓰고 재실행해 버린다
+    if cfg!(debug_assertions) {
+        return;
+    }
     let handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         let _ = auto_update(&handle).await; // 실패는 조용히 무시 — 다음 실행 때 재시도
