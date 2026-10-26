@@ -30,22 +30,81 @@ fn cached_unit(app: &AppHandle, mod_id: &str) -> Result<scan::ModUnit, String> {
         .ok_or_else(|| format!("설치본에서 {mod_id}를 찾지 못했습니다"))
 }
 
+/// LLM 프로필 — 제공자와 세부 옵션 묶음. 설정에 여러 개 두고 하나를 활성으로 쓴다.
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct LlmProfile {
+    id: String,
+    name: String,
+    /// gemini | openai | anthropic | claude-code | codex | ollama | lmstudio
+    provider: String,
+    /// 모델 ID — 비우면 제공자별 기본 모델 (Codex는 config.toml 기본값)
+    model: Option<String>,
+    api_key: Option<String>,
+    /// API 베이스 URL 오버라이드
+    base_url: Option<String>,
+    /// 추론 강도 — 값은 제공자별 (Gemini thinkingLevel, OpenAI reasoning_effort, Claude effort …)
+    reasoning: Option<String>,
+    /// CLI 실행 파일 (claude/codex) — 비우면 PATH
+    command: Option<String>,
+    /// 1M 토큰당 USD — 비우면 모델별 기본 단가
+    price_in: Option<f64>,
+    price_out: Option<f64>,
+}
+
+impl LlmProfile {
+    fn provider_config(&self) -> Result<kerbaloc_core::llm::ProviderConfig, String> {
+        use kerbaloc_core::llm::{default_model, ProviderConfig, ProviderKind};
+        let kind: ProviderKind = self
+            .provider
+            .parse()
+            .map_err(|e: anyhow::Error| e.to_string())?;
+        let model = self
+            .model
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| default_model(kind).to_string());
+        let prices = match (self.price_in, self.price_out) {
+            (Some(i), Some(o)) => Some((i, o)),
+            _ => None,
+        };
+        Ok(ProviderConfig {
+            kind,
+            model,
+            api_key: self.api_key.clone(),
+            base_url: self.base_url.clone(),
+            reasoning: self.reasoning.clone(),
+            command: self.command.clone(),
+            prices,
+        })
+    }
+}
+
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct Settings {
     ksp_root: Option<String>,
     nick: Option<String>,
-    /// gemini | openai | anthropic | claude-code | ollama | lmstudio (기본 gemini)
+    #[serde(default)]
+    profiles: Vec<LlmProfile>,
+    /// 번역에 쓸 프로필 id — 없거나 못 찾으면 첫 프로필
+    active_profile: Option<String>,
+    // ── 구버전 단일 제공자 설정: 로드 시 프로필로 이전하고 다시 저장하지 않는다 ──
+    #[serde(default, skip_serializing)]
     provider: Option<String>,
-    /// 모델 ID — 비우면 제공자별 기본 모델
+    #[serde(default, skip_serializing)]
     model: Option<String>,
+    #[serde(default, skip_serializing)]
     gemini_api_key: Option<String>,
+    #[serde(default, skip_serializing)]
     openai_api_key: Option<String>,
+    #[serde(default, skip_serializing)]
     anthropic_api_key: Option<String>,
-    /// OpenAI 호환 베이스 URL 오버라이드 (…/v1)
+    #[serde(default, skip_serializing)]
     ollama_url: Option<String>,
+    #[serde(default, skip_serializing)]
     lmstudio_url: Option<String>,
-    /// 1M 토큰당 USD — 비우면 모델별 기본 단가
+    #[serde(default, skip_serializing)]
     price_in: Option<f64>,
+    #[serde(default, skip_serializing)]
     price_out: Option<f64>,
     /// 청크당 최대 키 수 (기본 40)
     max_keys: Option<u32>,
@@ -58,33 +117,75 @@ struct Settings {
 }
 
 impl Settings {
-    fn provider_config(&self) -> Result<kerbaloc_core::llm::ProviderConfig, String> {
-        use kerbaloc_core::llm::{default_model, ProviderConfig, ProviderKind};
-        let kind: ProviderKind = self
+    /// 구버전 설정을 프로필로 이전 — 키·URL이 저장된 제공자마다 프로필을 만들고,
+    /// 모델·단가는 당시 선택돼 있던 제공자 프로필에만 옮긴다. 프로필이 이미 있으면 그대로.
+    fn migrate_legacy(&mut self) {
+        if !self.profiles.is_empty() {
+            return;
+        }
+        let active = self
             .provider
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("gemini")
-            .parse()
-            .map_err(|e: anyhow::Error| e.to_string())?;
-        let model = self
-            .model
             .clone()
-            .filter(|m| !m.trim().is_empty())
-            .unwrap_or_else(|| default_model(kind).to_string());
-        let (api_key, base_url) = match kind {
-            ProviderKind::Gemini => (self.gemini_api_key.clone(), None),
-            ProviderKind::OpenAi => (self.openai_api_key.clone(), None),
-            ProviderKind::Anthropic => (self.anthropic_api_key.clone(), None),
-            ProviderKind::ClaudeCode => (None, None),
-            ProviderKind::Ollama => (None, self.ollama_url.clone()),
-            ProviderKind::LmStudio => (None, self.lmstudio_url.clone()),
-        };
-        let prices = match (self.price_in, self.price_out) {
-            (Some(i), Some(o)) => Some((i, o)),
-            _ => None,
-        };
-        Ok(ProviderConfig { kind, model, api_key, base_url, prices })
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "gemini".into());
+        let legacy = [
+            ("gemini", "Gemini", self.gemini_api_key.clone(), None),
+            ("openai", "OpenAI", self.openai_api_key.clone(), None),
+            (
+                "anthropic",
+                "Claude API",
+                self.anthropic_api_key.clone(),
+                None,
+            ),
+            ("claude-code", "Claude Code", None, None),
+            ("ollama", "Ollama", None, self.ollama_url.clone()),
+            ("lmstudio", "LM Studio", None, self.lmstudio_url.clone()),
+        ];
+        let set = |v: &Option<String>| v.as_deref().is_some_and(|s| !s.trim().is_empty());
+        for (id, name, api_key, base_url) in legacy {
+            let is_active = id == active;
+            if !is_active && !set(&api_key) && !set(&base_url) {
+                continue;
+            }
+            self.profiles.push(LlmProfile {
+                id: id.into(),
+                name: name.into(),
+                provider: id.into(),
+                model: if is_active { self.model.clone() } else { None },
+                api_key,
+                base_url,
+                price_in: if is_active { self.price_in } else { None },
+                price_out: if is_active { self.price_out } else { None },
+                ..Default::default()
+            });
+        }
+        if self.profiles.is_empty() {
+            self.profiles.push(LlmProfile {
+                id: "gemini".into(),
+                name: "Gemini".into(),
+                provider: "gemini".into(),
+                ..Default::default()
+            });
+        }
+        let active_exists = self.profiles.iter().any(|p| p.id == active);
+        self.active_profile = Some(if active_exists {
+            active
+        } else {
+            self.profiles[0].id.clone()
+        });
+    }
+
+    fn active(&self) -> Option<&LlmProfile> {
+        self.profiles
+            .iter()
+            .find(|p| Some(&p.id) == self.active_profile.as_ref())
+            .or_else(|| self.profiles.first())
+    }
+
+    fn provider_config(&self) -> Result<kerbaloc_core::llm::ProviderConfig, String> {
+        self.active()
+            .ok_or("LLM 프로필이 없습니다. 설정에서 추가하세요.")?
+            .provider_config()
     }
 
     fn batch_options(&self) -> kerbaloc_core::batching::BatchOptions {
@@ -116,10 +217,12 @@ fn settings_path(app: &AppHandle) -> PathBuf {
 }
 
 fn load_settings_inner(app: &AppHandle) -> Settings {
-    std::fs::read_to_string(settings_path(app))
+    let mut s: Settings = std::fs::read_to_string(settings_path(app))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    s.migrate_legacy();
+    s
 }
 
 fn resolve_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -267,6 +370,8 @@ struct TranslateResult {
     failed: usize,
     cost: f64,
     pack_dir: String,
+    /// 이번 번역에서 용어집을 자동 생성했으면 그 결과(성공·실패)
+    glossary_note: Option<String>,
 }
 
 /// 실패 시에도 그때까지 지출한 비용을 함께 반환한다: Err((사유, 비용)).
@@ -290,10 +395,26 @@ async fn translate_one(
         return Err(fail0(format!("번역 차단된 모드({}): {}", b.name, b.reason)));
     }
 
+    // 모드 용어집: 없으면 초안을 자동 생성(미확정 저장)한다. 실패해도 번역은 코어 용어집만으로 계속.
+    let gpath = mod_glossary_path(&root, mod_id);
+    let mut glossary_cost = 0.0;
+    let mut glossary_note = None;
+    if !gpath.exists() {
+        let _permit = sem.acquire().await.map_err(|e| fail0(e.to_string()))?;
+        let (r, usage) =
+            modglossary::generate_draft(provider, &gpath, &unit.display_name, &unit.entries).await;
+        glossary_cost = usage.cost_usd(provider.prices().0, provider.prices().1);
+        glossary_note = Some(match r {
+            Ok(g) => format!("용어집 {}개 자동 생성", g.entries.len()),
+            Err(e) => format!("용어집 자동 생성 실패: {e}"),
+        });
+    }
+    let fail_g = |e: String| (e, glossary_cost);
+
     let mut glossary = Glossary::embedded_core();
-    // 모드 용어집: 사용자 확정 항목만 병합해 프롬프트에 주입
-    if let Ok(mg) = modglossary::ModGlossary::load(&mod_glossary_path(&root, mod_id)) {
-        glossary.extend_entries(mg.confirmed_entries());
+    // 모드 용어집: 초안 포함 전 항목을 병합해 프롬프트에 주입
+    if let Ok(mg) = modglossary::ModGlossary::load(&gpath) {
+        glossary.extend_entries(mg.prompt_entries());
     }
 
     // 재개: 같은 소스·모델의 잡이 있으면 이어서 (성공 청크 재번역 방지)
@@ -310,7 +431,7 @@ async fn translate_one(
                 settings.batch_options(),
             );
             (
-                JobStore::create(&job_dir, &m).map_err(|e| fail0(e.to_string()))?,
+                JobStore::create(&job_dir, &m).map_err(|e| fail_g(e.to_string()))?,
                 m,
             )
         }
@@ -335,18 +456,20 @@ async fn translate_one(
         },
     )
     .await
-    .map_err(|e| fail0(e.to_string()))?;
+    .map_err(|e| fail_g(e.to_string()))?;
 
     let cost = report
         .usage
-        .cost_usd(provider.prices().0, provider.prices().1);
+        .cost_usd(provider.prices().0, provider.prices().1)
+        + glossary_cost;
 
-    let variant = packgen::make_variant_id(&sanitize_method(&cfg.model), &nick);
+    // 모델명은 provider.name() — Codex 기본 모델(빈 값)은 "codex"로 기록
+    let variant = packgen::make_variant_id(&sanitize_method(provider.name()), &nick);
     let pack_dir = root
         .join("KerbaLoc-packs")
         .join(&unit.mod_id)
         .join(&variant);
-    packgen::build_pack(&pack_dir, &unit, &report.ok, &variant, &cfg.model)
+    packgen::build_pack(&pack_dir, &unit, &report.ok, &variant, provider.name())
         .map_err(|e| (e.to_string(), cost))?;
 
     Ok(TranslateResult {
@@ -364,6 +487,7 @@ async fn translate_one(
         failed: report.failed.len(),
         cost,
         pack_dir: pack_dir.to_string_lossy().to_string(),
+        glossary_note,
     })
 }
 
@@ -377,6 +501,7 @@ struct BatchModDone {
     error: Option<String>,
     installed: bool,
     pack_dir: Option<String>,
+    glossary_note: Option<String>,
 }
 
 /// 여러 모드를 병렬 번역 — 모든 모드의 청크 요청이 워커 세마포어(설정 workers, 기본 20)를
@@ -407,6 +532,7 @@ async fn translate_batch(app: AppHandle, mod_ids: Vec<String>) -> Result<Vec<Bat
                         error: None,
                         installed,
                         pack_dir: Some(r.pack_dir),
+                        glossary_note: r.glossary_note,
                     }
                 }
                 Err((e, cost)) => BatchModDone {
@@ -418,6 +544,7 @@ async fn translate_batch(app: AppHandle, mod_ids: Vec<String>) -> Result<Vec<Bat
                     error: Some(e),
                     installed: false,
                     pack_dir: None,
+                    glossary_note: None,
                 },
             };
             let _ = app.emit("batch-mod-done", done.clone());
@@ -644,8 +771,7 @@ struct GenGlossaryResult {
     cost: f64,
 }
 
-/// 용어집 초안 생성: 휴리스틱 후보 추출 → LLM 분류. 기존 항목은 유지하고
-/// 새 용어만 미확정(confirmed=false)으로 추가해 저장한다.
+/// 용어집 초안 생성 (수동 버튼) — 기존 항목은 유지하고 새 용어만 미확정으로 추가.
 #[tauri::command]
 async fn gen_mod_glossary(app: AppHandle, mod_id: String) -> Result<GenGlossaryResult, String> {
     use kerbaloc_core::llm::create_provider;
@@ -655,21 +781,14 @@ async fn gen_mod_glossary(app: AppHandle, mod_id: String) -> Result<GenGlossaryR
     let provider = create_provider(&cfg).map_err(|e| e.to_string())?;
     let unit = cached_unit(&app, &mod_id)?;
 
-    let path = mod_glossary_path(&root, &mod_id);
-    let mut existing = modglossary::ModGlossary::load(&path)
-        .map(|g| g.entries)
-        .unwrap_or_default();
-    let existing_terms: Vec<String> = existing.iter().map(|e| e.term.clone()).collect();
-
-    let core = Glossary::embedded_core();
-    let cands = modglossary::extract_candidates(&unit.entries, &core, &existing_terms);
-    let (r, usage) =
-        modglossary::classify_candidates(provider.as_ref(), &unit.display_name, &cands).await;
-    let new_entries = r.map_err(|e| e.to_string())?;
-    existing.extend(new_entries);
-
-    let g = modglossary::ModGlossary { version: 1, entries: existing };
-    g.save(&path).map_err(|e| e.to_string())?;
+    let (r, usage) = modglossary::generate_draft(
+        provider.as_ref(),
+        &mod_glossary_path(&root, &mod_id),
+        &unit.display_name,
+        &unit.entries,
+    )
+    .await;
+    let g = r.map_err(|e| e.to_string())?;
     Ok(GenGlossaryResult {
         entries: g.entries,
         cost: usage.cost_usd(provider.prices().0, provider.prices().1),
@@ -696,10 +815,10 @@ fn save_mod_glossary(
         .map_err(|e| e.to_string())
 }
 
-/// 현재(저장 전 포함) 설정으로 제공자의 모델 목록 조회.
+/// 편집 중인(저장 전 포함) 프로필로 제공자의 모델 목록 조회.
 #[tauri::command]
-async fn list_models_cmd(settings: Settings) -> Result<Vec<String>, String> {
-    let mut cfg = settings.provider_config()?;
+async fn list_models_cmd(profile: LlmProfile) -> Result<Vec<String>, String> {
+    let mut cfg = profile.provider_config()?;
     if cfg.model.is_empty() {
         cfg.model = "placeholder".into(); // 목록 조회에는 모델 불필요
     }
@@ -825,4 +944,69 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 실행 실패");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load(json: &str) -> Settings {
+        let mut s: Settings = serde_json::from_str(json).unwrap();
+        s.migrate_legacy();
+        s
+    }
+
+    #[test]
+    fn legacy_settings_become_profiles() {
+        // 구버전: anthropic 선택 + gemini·anthropic 키 저장, openai 키 없음
+        let s = load(
+            r#"{"provider":"anthropic","model":"claude-opus-5-5","gemini_api_key":"g",
+                "anthropic_api_key":"a","openai_api_key":"","price_in":1.0,"price_out":2.0}"#,
+        );
+        let ids: Vec<&str> = s.profiles.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["gemini", "anthropic"], "키가 있는 제공자만");
+        assert_eq!(s.active_profile.as_deref(), Some("anthropic"));
+        let a = s.active().unwrap();
+        assert_eq!(a.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!((a.price_in, a.price_out), (Some(1.0), Some(2.0)));
+        let g = &s.profiles[0];
+        assert_eq!(g.api_key.as_deref(), Some("g"));
+        assert!(
+            g.model.is_none() && g.price_in.is_none(),
+            "모델·단가는 선택 제공자에만"
+        );
+    }
+
+    #[test]
+    fn empty_settings_get_default_gemini_profile() {
+        let s = load("{}");
+        assert_eq!(s.profiles.len(), 1);
+        assert_eq!(s.profiles[0].provider, "gemini");
+        assert_eq!(s.provider_config().unwrap().model, "gemini-3.1-flash-lite");
+    }
+
+    #[test]
+    fn existing_profiles_untouched_and_legacy_not_saved() {
+        let s = load(
+            r#"{"gemini_api_key":"old","active_profile":"x",
+                "profiles":[{"id":"x","name":"내 Codex","provider":"codex","reasoning":"high"}]}"#,
+        );
+        assert_eq!(s.profiles.len(), 1);
+        let cfg = s.provider_config().unwrap();
+        assert_eq!(cfg.kind, kerbaloc_core::llm::ProviderKind::Codex);
+        assert_eq!(cfg.reasoning.as_deref(), Some("high"));
+        let out = serde_json::to_string(&s).unwrap();
+        assert!(
+            !out.contains("gemini_api_key"),
+            "구버전 필드는 다시 저장하지 않음"
+        );
+    }
+
+    #[test]
+    fn unknown_active_falls_back_to_first() {
+        let s = load(
+            r#"{"active_profile":"gone","profiles":[{"id":"a","name":"A","provider":"gemini"}]}"#,
+        );
+        assert_eq!(s.active().unwrap().id, "a");
+    }
 }

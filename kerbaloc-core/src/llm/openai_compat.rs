@@ -10,10 +10,21 @@ pub struct OpenAiCompatProvider {
     api_key: Option<String>,
     prices: (f64, f64),
     client: reqwest::Client,
+    /// None이면 보내지 않음 (OpenAI 추론 모델은 기본값 외 거부)
+    temperature: Option<f64>,
+    /// reasoning_effort (none|minimal|low|medium|high|xhigh) — None이면 보내지 않음
+    reasoning_effort: Option<String>,
 }
 
 impl OpenAiCompatProvider {
-    pub fn new(base_url: &str, model: &str, api_key: Option<&str>, prices: (f64, f64)) -> Self {
+    pub fn new(
+        base_url: &str,
+        model: &str,
+        api_key: Option<&str>,
+        prices: (f64, f64),
+        temperature: Option<f64>,
+        reasoning_effort: Option<&str>,
+    ) -> Self {
         OpenAiCompatProvider {
             base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
@@ -23,8 +34,44 @@ impl OpenAiCompatProvider {
                 .timeout(Duration::from_secs(300)) // 로컬 모델은 느릴 수 있음
                 .build()
                 .expect("reqwest 클라이언트 생성 실패"),
+            temperature,
+            reasoning_effort: reasoning_effort.map(String::from),
         }
     }
+
+    fn body(&self, system: &str, user: &str) -> Value {
+        chat_body(
+            &self.model,
+            system,
+            user,
+            self.temperature,
+            self.reasoning_effort.as_deref(),
+        )
+    }
+}
+
+/// chat/completions 요청 본문 — 설정된 샘플링·추론 옵션만 포함.
+pub fn chat_body(
+    model: &str,
+    system: &str,
+    user: &str,
+    temperature: Option<f64>,
+    reasoning_effort: Option<&str>,
+) -> Value {
+    let mut body = json!({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    });
+    if let Some(t) = temperature {
+        body["temperature"] = json!(t);
+    }
+    if let Some(r) = reasoning_effort {
+        body["reasoning_effort"] = json!(r);
+    }
+    body
 }
 
 /// chat/completions 응답에서 (번역 항목, 사용량) 추출. usage는 파싱 실패해도 집계.
@@ -69,14 +116,7 @@ impl Provider for OpenAiCompatProvider {
         context: &str,
         payload: &str,
     ) -> (anyhow::Result<Vec<TranslatedItem>>, Usage) {
-        let body = json!({
-            "model": self.model,
-            "temperature": 0.2,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": format!("{context}\n\n{payload}")},
-            ],
-        });
+        let body = self.body(system, &format!("{context}\n\n{payload}"));
         let mut delay = Duration::from_millis(500);
         for attempt in 0..4 {
             let mut req = self
@@ -112,14 +152,7 @@ impl Provider for OpenAiCompatProvider {
     }
 
     async fn complete(&self, system: &str, user: &str) -> (anyhow::Result<String>, Usage) {
-        let body = json!({
-            "model": self.model,
-            "temperature": 0.2,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        });
+        let body = self.body(system, user);
         let mut req = self
             .client
             .post(format!("{}/chat/completions", self.base_url))

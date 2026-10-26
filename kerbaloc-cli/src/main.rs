@@ -225,6 +225,8 @@ fn cmd_translate(
         model: model.clone(),
         api_key,
         base_url: std::env::var("KERBALOC_BASE_URL").ok(),
+        reasoning: std::env::var("KERBALOC_REASONING").ok(),
+        command: std::env::var("KERBALOC_COMMAND").ok(),
         prices,
     };
 

@@ -1,6 +1,8 @@
 use kerbaloc_core::glossary::Glossary;
 use kerbaloc_core::llm::{Provider, TranslatedItem, Usage};
-use kerbaloc_core::modglossary::{classify_candidates, extract_candidates, ModGlossary};
+use kerbaloc_core::modglossary::{
+    classify_candidates, extract_candidates, generate_draft, ModGlossary,
+};
 use std::collections::BTreeMap;
 
 fn entries() -> BTreeMap<String, String> {
@@ -103,8 +105,96 @@ fn classify_drops_noise_and_tracks_usage() {
     assert!(usage.input_tokens > 0);
 }
 
+/// complete()를 구현하지 않은 공급자 — 기본 구현이 오류를 돌려준다.
+struct NoComplete;
+
+#[async_trait::async_trait]
+impl Provider for NoComplete {
+    fn name(&self) -> &str {
+        "no-complete"
+    }
+    fn prices(&self) -> (f64, f64) {
+        (1.0, 1.0)
+    }
+    async fn translate(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> (anyhow::Result<Vec<TranslatedItem>>, Usage) {
+        unimplemented!()
+    }
+}
+
 #[test]
-fn save_load_roundtrip_and_confirmed_filter() {
+fn generate_draft_creates_unconfirmed_file() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("sub").join("CRP.ko.json"); // 상위 폴더 없음 → 생성돼야
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (r, usage) = rt.block_on(generate_draft(&FakeClassifier, &path, "CRP", &entries()));
+    let g = r.unwrap();
+    assert!(g.entries.iter().any(|e| e.term == "Karbonite"));
+    assert!(
+        g.entries.iter().all(|e| !e.confirmed),
+        "자동 생성분은 미확정"
+    );
+    assert!(usage.input_tokens > 0);
+    assert_eq!(
+        ModGlossary::load(&path).unwrap().entries.len(),
+        g.entries.len()
+    );
+}
+
+#[test]
+fn generate_draft_keeps_existing_entries() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("CRP.ko.json");
+    ModGlossary {
+        version: 1,
+        entries: vec![kerbaloc_core::modglossary::ModGlossaryEntry {
+            term: "Drill-O-Matic".into(),
+            policy: "keep".into(),
+            ko: None,
+            aliases: vec![],
+            why: None,
+            count: 2,
+            confirmed: true,
+        }],
+    }
+    .save(&path)
+    .unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (r, _) = rt.block_on(generate_draft(&FakeClassifier, &path, "CRP", &entries()));
+    let g = r.unwrap();
+    assert!(
+        g.entries
+            .iter()
+            .any(|e| e.term == "Drill-O-Matic" && e.confirmed),
+        "기존 확정 항목 유지"
+    );
+    assert!(
+        g.entries
+            .iter()
+            .any(|e| e.term == "Karbonite" && !e.confirmed),
+        "새 항목은 미확정 추가"
+    );
+}
+
+#[test]
+fn generate_draft_failure_leaves_no_file() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("CRP.ko.json");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (r, _) = rt.block_on(generate_draft(&NoComplete, &path, "CRP", &entries()));
+    assert!(r.is_err());
+    assert!(
+        !path.exists(),
+        "실패 시 파일을 만들지 않아야 다음 번역에서 재시도"
+    );
+}
+
+#[test]
+fn save_load_roundtrip_and_prompt_entries() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("TestMod.ko.json");
     let g = ModGlossary {
@@ -126,20 +216,20 @@ fn save_load_roundtrip_and_confirmed_filter() {
                 aliases: vec![],
                 why: None,
                 count: 2,
-                confirmed: false, // 미확정 → 주입 제외
+                confirmed: false, // 미확정 초안도 주입
             },
         ],
     };
     g.save(&path).unwrap();
     let loaded = ModGlossary::load(&path).unwrap();
     assert_eq!(loaded.entries.len(), 2);
-    let confirmed = loaded.confirmed_entries();
-    assert_eq!(confirmed.len(), 1);
-    assert_eq!(confirmed[0].en, "Karbonite");
+    let prompt = loaded.prompt_entries();
+    assert_eq!(prompt.len(), 2);
 
-    // 병합 후 매칭에 실제 반영되는지
+    // 병합 후 매칭에 실제 반영되는지 (확정·미확정 모두)
     let mut core = Glossary::embedded_core();
-    core.extend_entries(confirmed);
-    let block = Glossary::prompt_block(&core.matches(&["Deploy the Karbonite drill"]));
+    core.extend_entries(prompt);
+    let block = Glossary::prompt_block(&core.matches(&["Deploy the Karbonite mining rig"]));
     assert!(block.contains("Karbonite => (영어 유지)"));
+    assert!(block.contains("mining rig => 채굴 장비"));
 }

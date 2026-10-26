@@ -2,11 +2,16 @@ use super::{Provider, TranslatedItem, Usage};
 use serde_json::{json, Value};
 use std::time::Duration;
 
+pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+
 pub struct GeminiProvider {
     pub model: String,
     api_key: String,
     prices: (f64, f64),
     client: reqwest::Client,
+    base_url: String,
+    /// generationConfig.thinkingConfig.thinkingLevel (minimal|low|medium|high)
+    thinking_level: Option<String>,
 }
 
 impl GeminiProvider {
@@ -23,7 +28,21 @@ impl GeminiProvider {
                 .timeout(Duration::from_secs(120))
                 .build()
                 .expect("reqwest 클라이언트 생성 실패"),
+            base_url: DEFAULT_BASE_URL.to_string(),
+            thinking_level: None,
         }
+    }
+
+    pub fn with_options(mut self, base_url: Option<&str>, thinking_level: Option<&str>) -> Self {
+        if let Some(u) = base_url {
+            self.base_url = u.trim_end_matches('/').to_string();
+        }
+        self.thinking_level = thinking_level.map(String::from);
+        self
+    }
+
+    fn url(&self) -> String {
+        format!("{}/models/{}:generateContent", self.base_url, self.model)
     }
 
     pub fn prices_for(model: &str) -> (f64, f64) {
@@ -38,6 +57,36 @@ impl GeminiProvider {
     }
 }
 
+/// 사고(thinking) 토큰도 출력 단가로 청구되므로 출력에 합산한다.
+fn usage_of(v: &Value) -> Usage {
+    let n = |p: &str| v.pointer(p).and_then(Value::as_u64).unwrap_or(0);
+    Usage {
+        input_tokens: n("/usageMetadata/promptTokenCount"),
+        output_tokens: n("/usageMetadata/candidatesTokenCount")
+            + n("/usageMetadata/thoughtsTokenCount"),
+    }
+}
+
+/// generationConfig 조립 — thinking_level이 있으면 thinkingConfig 추가.
+pub fn generation_config(json_schema: bool, thinking_level: Option<&str>) -> Value {
+    let mut gc = json!({"temperature": 0.2});
+    if json_schema {
+        gc["responseMimeType"] = json!("application/json");
+        gc["responseSchema"] = json!({
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {"i": {"type": "INTEGER"}, "ko": {"type": "STRING"}},
+                "required": ["i", "ko"]
+            }
+        });
+    }
+    if let Some(level) = thinking_level {
+        gc["thinkingConfig"] = json!({"thinkingLevel": level});
+    }
+    gc
+}
+
 /// 200 응답이라도 본문 파싱에 실패하면 토큰은 이미 청구된 상태 —
 /// usage는 항상 추출해 실패와 함께 반환한다.
 pub fn parse_response(body: &str) -> (anyhow::Result<Vec<TranslatedItem>>, Usage) {
@@ -45,16 +94,7 @@ pub fn parse_response(body: &str) -> (anyhow::Result<Vec<TranslatedItem>>, Usage
         Ok(v) => v,
         Err(e) => return (Err(e.into()), Usage::default()),
     };
-    let usage = Usage {
-        input_tokens: v
-            .pointer("/usageMetadata/promptTokenCount")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        output_tokens: v
-            .pointer("/usageMetadata/candidatesTokenCount")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-    };
+    let usage = usage_of(&v);
     let items = (|| {
         let text = v
             .pointer("/candidates/0/content/parts/0/text")
@@ -82,25 +122,11 @@ impl Provider for GeminiProvider {
         context: &str,
         payload: &str,
     ) -> (anyhow::Result<Vec<TranslatedItem>>, Usage) {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
-            self.model
-        );
+        let url = self.url();
         let body = json!({
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": format!("{context}\n\n{payload}")}]}],
-            "generationConfig": {
-                "temperature": 0.2,
-                "responseMimeType": "application/json",
-                "responseSchema": {
-                    "type": "ARRAY",
-                    "items": {
-                        "type": "OBJECT",
-                        "properties": {"i": {"type": "INTEGER"}, "ko": {"type": "STRING"}},
-                        "required": ["i", "ko"]
-                    }
-                }
-            }
+            "generationConfig": generation_config(true, self.thinking_level.as_deref()),
         });
         // 429/503 지수 백오프: 0.5s → 2s → 8s (AIMD 적응 동시성은 v1 범위 외)
         let mut delay = Duration::from_millis(500);
@@ -138,14 +164,11 @@ impl Provider for GeminiProvider {
     }
 
     async fn complete(&self, system: &str, user: &str) -> (anyhow::Result<String>, Usage) {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
-            self.model
-        );
+        let url = self.url();
         let body = json!({
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": user}]}],
-            "generationConfig": {"temperature": 0.2}
+            "generationConfig": generation_config(false, self.thinking_level.as_deref()),
         });
         let resp = self
             .client
@@ -165,16 +188,7 @@ impl Provider for GeminiProvider {
             Ok(v) => v,
             Err(e) => return (Err(e.into()), Usage::default()),
         };
-        let usage = Usage {
-            input_tokens: v
-                .pointer("/usageMetadata/promptTokenCount")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            output_tokens: v
-                .pointer("/usageMetadata/candidatesTokenCount")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-        };
+        let usage = usage_of(&v);
         let out = v
             .pointer("/candidates/0/content/parts/0/text")
             .and_then(|x| x.as_str())

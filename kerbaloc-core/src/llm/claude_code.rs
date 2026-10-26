@@ -1,21 +1,46 @@
 //! Claude Code CLI(`claude -p`) 제공자 — 구독 기반이라 토큰 비용 0으로 취급.
 //! 로컬에 claude CLI가 설치·로그인되어 있어야 한다.
 
-use super::{parse_items_text, Provider, TranslatedItem, Usage};
+use super::{parse_items_text, run_cli, Provider, TranslatedItem, Usage};
 use serde_json::Value;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 pub struct ClaudeCodeProvider {
-    model: String, // "sonnet"/"opus"/"haiku" 또는 전체 모델 ID
+    model: String, // "sonnet"/"opus"/"haiku"/"fable" 또는 전체 모델 ID
+    command: String,
+    /// --effort (low|medium|high|xhigh|max) — None이면 CLI 기본값
+    effort: Option<String>,
 }
 
 impl ClaudeCodeProvider {
-    pub fn new(model: &str) -> Self {
+    pub fn new(model: &str, command: &str, effort: Option<&str>) -> Self {
         ClaudeCodeProvider {
             model: model.to_string(),
+            command: command.to_string(),
+            effort: effort.map(String::from),
         }
     }
+
+    async fn run(&self, prompt: &str) -> anyhow::Result<String> {
+        run_cli(
+            &self.command,
+            &cli_args(&self.model, self.effort.as_deref()),
+            prompt,
+            None,
+        )
+        .await
+    }
+}
+
+/// `claude -p` 인자 — 프롬프트는 stdin.
+pub fn cli_args(model: &str, effort: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = ["-p", "--output-format", "json", "--model", model]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    if let Some(e) = effort {
+        args.extend(["--effort".to_string(), e.to_string()]);
+    }
+    args
 }
 
 /// `claude -p --output-format json` stdout에서 (번역 항목, 사용량) 추출.
@@ -66,14 +91,17 @@ impl Provider for ClaudeCodeProvider {
         context: &str,
         payload: &str,
     ) -> (anyhow::Result<Vec<TranslatedItem>>, Usage) {
-        match run_claude(&self.model, &format!("{system}\n\n{context}\n\n{payload}")).await {
+        match self
+            .run(&format!("{system}\n\n{context}\n\n{payload}"))
+            .await
+        {
             Ok(stdout) => parse_output(&stdout),
             Err(e) => (Err(e), Usage::default()),
         }
     }
 
     async fn complete(&self, system: &str, user: &str) -> (anyhow::Result<String>, Usage) {
-        let stdout = match run_claude(&self.model, &format!("{system}\n\n{user}")).await {
+        let stdout = match self.run(&format!("{system}\n\n{user}")).await {
             Ok(s) => s,
             Err(e) => return (Err(e), Usage::default()),
         };
@@ -104,37 +132,4 @@ impl Provider for ClaudeCodeProvider {
         };
         (out, usage)
     }
-}
-
-/// claude CLI 실행 공통부: stdin으로 프롬프트 전달, stdout(JSON) 반환.
-async fn run_claude(model: &str, prompt: &str) -> anyhow::Result<String> {
-    // Windows에서 claude는 .cmd 셔틀일 수 있어 셸 경유로 실행
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.args(["/C", "claude"]);
-        c
-    } else {
-        Command::new("claude")
-    };
-    cmd.args(["-p", "--output-format", "json", "--model", model])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("claude CLI 실행 실패 (설치·PATH 확인): {e}"))?;
-    let mut stdin = child.stdin.take().expect("stdin piped");
-    stdin.write_all(prompt.as_bytes()).await?;
-    drop(stdin);
-    let out = child.wait_with_output().await?;
-    anyhow::ensure!(
-        out.status.success(),
-        "claude CLI 종료 코드 {}: {}",
-        out.status,
-        String::from_utf8_lossy(&out.stderr)
-            .chars()
-            .take(300)
-            .collect::<String>()
-    );
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }

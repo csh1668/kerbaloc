@@ -44,11 +44,11 @@ impl ModGlossary {
         Ok(())
     }
 
-    /// 확정된 항목을 프롬프트 매칭용 GlossaryEntry로 변환.
-    pub fn confirmed_entries(&self) -> Vec<GlossaryEntry> {
+    /// 프롬프트 매칭용 GlossaryEntry로 변환 — 미확정 초안 포함.
+    /// (번역 시 자동 생성된 초안이 첫 실행과 재개 실행에 똑같이 적용되도록)
+    pub fn prompt_entries(&self) -> Vec<GlossaryEntry> {
         self.entries
             .iter()
-            .filter(|e| e.confirmed)
             .map(|e| GlossaryEntry {
                 en: e.term.clone(),
                 ko: e.ko.clone(),
@@ -287,4 +287,34 @@ pub async fn classify_candidates(
         }
     }
     (Ok(out), usage)
+}
+
+/// 초안 생성: 휴리스틱 후보 추출 → LLM 분류. 기존 항목은 유지하고
+/// 새 용어만 미확정(confirmed=false)으로 추가해 `path`에 저장한다.
+/// 실패 시 파일은 건드리지 않는다.
+pub async fn generate_draft(
+    provider: &dyn Provider,
+    path: &Path,
+    mod_name: &str,
+    entries: &BTreeMap<String, String>,
+) -> (anyhow::Result<ModGlossary>, Usage) {
+    let mut existing = ModGlossary::load(path)
+        .map(|g| g.entries)
+        .unwrap_or_default();
+    let existing_terms: Vec<String> = existing.iter().map(|e| e.term.clone()).collect();
+    let cands = extract_candidates(entries, &Glossary::embedded_core(), &existing_terms);
+    let (r, usage) = classify_candidates(provider, mod_name, &cands).await;
+    let new_entries = match r {
+        Ok(v) => v,
+        Err(e) => return (Err(e), usage),
+    };
+    existing.extend(new_entries);
+    let g = ModGlossary {
+        version: 1,
+        entries: existing,
+    };
+    if let Err(e) = g.save(path) {
+        return (Err(e), usage);
+    }
+    (Ok(g), usage)
 }
