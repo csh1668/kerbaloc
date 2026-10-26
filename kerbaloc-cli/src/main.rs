@@ -1,4 +1,6 @@
 use clap::{Parser, Subcommand};
+use kerbaloc_core::llm::create_provider;
+use kerbaloc_core::settings::Settings;
 use kerbaloc_core::{game, scan};
 use std::path::PathBuf;
 
@@ -42,18 +44,46 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DbCmd,
     },
-    /// LLM으로 모드 번역 → 검증 → 팩 생성
+    /// LLM으로 모드 번역 → 검증 → 팩 생성 (앱과 같은 설정·프로필·용어집 사용)
     Translate {
         mod_id: String,
-        #[arg(long, default_value = "anon")]
-        nick: String,
+        /// 사용할 LLM 프로필 (id 또는 이름, 미지정 시 활성 프로필)
+        #[arg(long)]
+        profile: Option<String>,
+        /// 변형 ID에 들어갈 닉네임 (미지정 시 설정의 닉네임)
+        #[arg(long)]
+        nick: Option<String>,
         /// 완성된 팩을 GameData/KerbaLoc에 바로 설치
         #[arg(long)]
         install: bool,
-        /// 기존 잡 이어하기
+        /// 같은 소스·모델의 기존 잡이 있어도 이어하지 않고 새로 시작
         #[arg(long)]
-        resume: bool,
+        fresh: bool,
     },
+    /// LLM 프로필 관리 — 앱 설정과 같은 파일(settings.json)을 쓴다
+    Profile {
+        #[command(subcommand)]
+        cmd: ProfileCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfileCmd {
+    /// 프로필 목록 (* = 활성)
+    List,
+    /// 활성 프로필 변경 (id 또는 이름)
+    Use { profile: String },
+    /// 모델 목록 조회 — ▶ = 이 프로필이 쓸 모델 (지정값 → 기본 모델 → 목록 최상단)
+    Models { profile: Option<String> },
+    /// 프로필 생성·수정: key=value … (빈 값은 해제)
+    /// 키: name provider model api_key base_url reasoning command price_in price_out
+    Set {
+        profile: String,
+        #[arg(required = true)]
+        values: Vec<String>,
+    },
+    /// 프로필 삭제 (마지막 하나는 삭제 불가)
+    Remove { profile: String },
 }
 
 #[derive(Subcommand)]
@@ -77,8 +107,9 @@ enum DbCmd {
     /// 팩을 익명 프록시로 공유 (계정·키 불필요 — 자동 PR 생성)
     Share {
         pack_dir: PathBuf,
-        #[arg(long, default_value = "anon")]
-        nick: String,
+        /// 미지정 시 설정의 닉네임
+        #[arg(long)]
+        nick: Option<String>,
     },
 }
 
@@ -182,6 +213,7 @@ fn cmd_db(root: &std::path::Path, cmd: DbCmd) -> anyhow::Result<()> {
             let proxy = std::env::var("KERBALOC_PROXY_URL")
                 .unwrap_or_else(|_| kerbaloc_core::share::DEFAULT_PROXY.into());
             let rt = tokio::runtime::Runtime::new()?;
+            let nick = nick.unwrap_or_else(|| Settings::load().nick());
             let result = rt.block_on(kerbaloc_core::share::share_pack(&proxy, &pack_dir, &nick))?;
             println!("공유 완료! PR: {}", result.pr_url);
         }
@@ -192,53 +224,19 @@ fn cmd_db(root: &std::path::Path, cmd: DbCmd) -> anyhow::Result<()> {
 fn cmd_translate(
     root: &std::path::Path,
     mod_id: &str,
-    nick: &str,
+    profile: Option<&str>,
+    nick: Option<String>,
     install: bool,
-    resume: bool,
+    fresh: bool,
 ) -> anyhow::Result<()> {
-    use kerbaloc_core::llm::{create_provider, default_model, ProviderConfig, ProviderKind};
-    use kerbaloc_core::{glossary::Glossary, jobstore::JobStore, packgen, pipeline};
-    dotenvy::dotenv().ok();
-    // 제공자 구성: KERBALOC_PROVIDER (기본 gemini) + 제공자별 키/URL 환경변수
-    let kind: ProviderKind = std::env::var("KERBALOC_PROVIDER")
-        .unwrap_or_else(|_| "gemini".into())
-        .parse()?;
-    let model = std::env::var("KERBALOC_MODEL")
-        .ok()
-        .filter(|m| !m.is_empty())
-        .unwrap_or_else(|| default_model(kind).to_string());
-    let api_key = match kind {
-        ProviderKind::Gemini => std::env::var("GEMINI_API_KEY").ok(),
-        ProviderKind::OpenAi => std::env::var("OPENAI_API_KEY").ok(),
-        ProviderKind::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
-        _ => None,
-    };
-    let prices = match (
-        std::env::var("KERBALOC_PRICE_IN").ok().and_then(|v| v.parse().ok()),
-        std::env::var("KERBALOC_PRICE_OUT").ok().and_then(|v| v.parse().ok()),
-    ) {
-        (Some(i), Some(o)) => Some((i, o)),
-        _ => None,
-    };
-    let cfg = ProviderConfig {
-        kind,
-        model: model.clone(),
-        api_key,
-        base_url: std::env::var("KERBALOC_BASE_URL").ok(),
-        reasoning: std::env::var("KERBALOC_REASONING").ok(),
-        command: std::env::var("KERBALOC_COMMAND").ok(),
-        prices,
-    };
-
+    use kerbaloc_core::translate::{translate_mod, TranslateOptions};
+    let settings = Settings::load();
     let units = scan::scan_gamedata(root);
     let Some(unit) = units.into_iter().find(|u| u.mod_id == mod_id) else {
         anyhow::bail!(
             "설치본에서 {mod_id}를 찾지 못했습니다. `kerbaloc scan`으로 ModId를 확인하세요."
         );
     };
-    if let Some(b) = kerbaloc_core::blacklist::check(&unit.entries) {
-        anyhow::bail!("번역 차단된 모드({}): {}", b.name, b.reason);
-    }
     println!(
         "{}: {}키, 소스 {}",
         unit.mod_id,
@@ -246,64 +244,51 @@ fn cmd_translate(
         &unit.source_hash[..22]
     );
 
-    let glossary = Glossary::embedded_core(); // 바이너리 내장 — 배포 exe에서도 동작
-
-    let provider = create_provider(&cfg)?;
-    let provider = provider.as_ref();
-
-    let job_dir = root.join("KerbaLoc-jobs").join(&unit.mod_id);
-    let (store, manifest) = if resume && job_dir.join("manifest.json").is_file() {
-        let (s, m) = JobStore::open(&job_dir)?;
-        anyhow::ensure!(
-            m.src_hash == unit.source_hash,
-            "모드가 업데이트되어 재개할 수 없습니다. --resume 없이 새로 시작하세요."
-        );
-        (s, m)
-    } else {
-        let m = pipeline::make_manifest(
-            &unit.mod_id,
-            &unit.source_hash,
-            provider.name(),
-            provider.prices(),
-            &unit.entries,
-        );
-        (JobStore::create(&job_dir, &m)?, m)
-    };
-
     let rt = tokio::runtime::Runtime::new()?;
-    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
-    let report = rt.block_on(pipeline::translate_job(
-        provider,
-        &unit.entries,
-        &glossary,
-        &unit.display_name,
-        &store,
-        &manifest,
-        sem,
-        2,
-        &|done, total, cost| println!("  [{done}/{total}] 누적 ${cost:.4}"),
-    ))?;
+    let p = settings.profile_or_active(profile)?;
+    let cfg = rt.block_on(settings.resolved_provider_config(profile))?;
+    let provider = create_provider(&cfg)?;
+    println!(
+        "프로필: {} ({} / {})",
+        p.name,
+        cfg.kind.id(),
+        provider.name()
+    );
 
+    let nick = nick.unwrap_or_else(|| settings.nick());
+    let opts = TranslateOptions {
+        nick: &nick,
+        batch: settings.batch_options(),
+        max_retries: settings.max_retries(),
+        fresh,
+    };
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(settings.workers()));
+    let out = rt
+        .block_on(translate_mod(
+            root,
+            &unit,
+            provider.as_ref(),
+            &opts,
+            sem,
+            &|done, total, cost| println!("  [{done}/{total}] 누적 ${cost:.4}"),
+        ))
+        .map_err(|(e, cost)| anyhow::anyhow!("{e} (지출 ${cost:.4})"))?;
+
+    if let Some(note) = &out.glossary_note {
+        println!("{note}");
+    }
+    let report = &out.report;
     println!(
         "완료: ok {} / 검수 필요 {} / 실패 {} — 비용 ${:.4}",
         report.ok.len(),
         report.review.len(),
         report.failed.len(),
-        report
-            .usage
-            .cost_usd(provider.prices().0, provider.prices().1)
+        out.cost
     );
-
-    let variant = packgen::make_variant_id(&model.replace(['-', '.'], ""), nick);
-    let pack_dir = root
-        .join("KerbaLoc-packs")
-        .join(&unit.mod_id)
-        .join(&variant);
-    packgen::build_pack(&pack_dir, &unit, &report.ok, &variant, &model)?;
-    println!("팩 생성: {}", pack_dir.display());
+    println!("팩 생성: {}", out.pack_dir.display());
 
     if !report.review.is_empty() {
-        let review_path = pack_dir.join("review.txt");
+        let review_path = out.pack_dir.join("review.txt");
         let mut txt = String::new();
         for r in &report.review {
             txt.push_str(&format!(
@@ -319,14 +304,165 @@ fn cmd_translate(
     }
 
     if install {
-        let dest = kerbaloc_core::pack::install_pack(root, &pack_dir)?;
+        let dest = kerbaloc_core::pack::install_pack(root, &out.pack_dir)?;
         println!("설치됨: {}", dest.display());
     }
     Ok(())
 }
 
+/// 키 보유 여부만 표시 — 목록 출력에 키 값을 노출하지 않는다.
+fn mask(v: &Option<String>) -> &'static str {
+    if v.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+        "있음"
+    } else {
+        "-"
+    }
+}
+
+fn cmd_profile(cmd: ProfileCmd) -> anyhow::Result<()> {
+    use kerbaloc_core::llm::{default_model, model_choices, ProviderKind};
+    use kerbaloc_core::settings::LlmProfile;
+    let mut settings = Settings::load();
+    match cmd {
+        ProfileCmd::List => {
+            let active = settings.active().map(|p| p.id.clone());
+            println!(
+                "  {:<14} {:<16} {:<12} {:<28} {:<8} 키",
+                "id", "이름", "유형", "모델", "추론"
+            );
+            for p in &settings.profiles {
+                println!(
+                    "{} {:<14} {:<16} {:<12} {:<28} {:<8} {}",
+                    if Some(&p.id) == active.as_ref() {
+                        "*"
+                    } else {
+                        " "
+                    },
+                    p.id,
+                    p.name,
+                    p.provider,
+                    p.model.as_deref().unwrap_or("(자동)"),
+                    p.reasoning.as_deref().unwrap_or("-"),
+                    mask(&p.api_key)
+                );
+            }
+            println!(
+                "설정 파일: {}",
+                kerbaloc_core::settings::settings_path().display()
+            );
+        }
+        ProfileCmd::Use { profile } => {
+            let id = settings.profile_or_active(Some(&profile))?.id.clone();
+            settings.active_profile = Some(id.clone());
+            settings.save()?;
+            println!("활성 프로필: {id}");
+        }
+        ProfileCmd::Models { profile } => {
+            let p = settings.profile_or_active(profile.as_deref())?;
+            let cfg = p.provider_config()?;
+            let rt = tokio::runtime::Runtime::new()?;
+            let mc = rt.block_on(model_choices(&cfg, p.model.as_deref()));
+            if let Some(e) = &mc.error {
+                eprintln!("목록 조회 실패 — 기본 후보를 표시합니다: {e}");
+            }
+            let default = default_model(cfg.kind);
+            for m in &mc.models {
+                let mark = if mc.selected.as_deref() == Some(m) {
+                    "▶"
+                } else {
+                    " "
+                };
+                let tag = if m == default { " (기본)" } else { "" };
+                println!("{mark} {m}{tag}");
+            }
+            if let Some(s) = mc
+                .selected
+                .as_deref()
+                .filter(|s| !mc.models.iter().any(|m| m == s))
+            {
+                println!("▶ {s} (목록에 없음 — 지정값)");
+            }
+            println!("선택: kerbaloc profile set {} model=<모델>", p.id);
+        }
+        ProfileCmd::Set { profile, values } => {
+            let idx = settings
+                .profiles
+                .iter()
+                .position(|p| p.id == profile || p.name == profile);
+            let mut p = match idx {
+                Some(i) => settings.profiles[i].clone(),
+                None => LlmProfile {
+                    id: profile.clone(),
+                    name: profile.clone(),
+                    ..Default::default()
+                },
+            };
+            for kv in &values {
+                let (k, v) = kv
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("key=value 형식이 아님: {kv}"))?;
+                let v = v.trim();
+                let opt = || (!v.is_empty()).then(|| v.to_string());
+                let price = || -> anyhow::Result<Option<f64>> {
+                    Ok(if v.is_empty() { None } else { Some(v.parse()?) })
+                };
+                match k.trim() {
+                    "name" => p.name = v.to_string(),
+                    "provider" => {
+                        v.parse::<ProviderKind>()?;
+                        p.provider = v.to_string();
+                    }
+                    "model" => p.model = opt(),
+                    "api_key" => p.api_key = opt(),
+                    "base_url" => p.base_url = opt(),
+                    "reasoning" => p.reasoning = opt(),
+                    "command" => p.command = opt(),
+                    "price_in" => p.price_in = price()?,
+                    "price_out" => p.price_out = price()?,
+                    other => anyhow::bail!("알 수 없는 키: {other}"),
+                }
+            }
+            let kind: ProviderKind = p
+                .provider
+                .parse()
+                .map_err(|_| anyhow::anyhow!("provider를 지정하세요 (예: provider=gemini)"))?;
+            if let Some(r) = &p.reasoning {
+                let levels = kind.info().reasoning_levels;
+                anyhow::ensure!(
+                    levels.contains(&r.as_str()),
+                    "{}의 reasoning은 {} 중 하나",
+                    kind.id(),
+                    levels.join("|")
+                );
+            }
+            let id = p.id.clone();
+            match idx {
+                Some(i) => settings.profiles[i] = p,
+                None => settings.profiles.push(p),
+            }
+            settings.save()?;
+            println!("저장됨: {id}");
+        }
+        ProfileCmd::Remove { profile } => {
+            anyhow::ensure!(
+                settings.profiles.len() > 1,
+                "마지막 프로필은 삭제할 수 없습니다"
+            );
+            let id = settings.profile_or_active(Some(&profile))?.id.clone();
+            settings.profiles.retain(|p| p.id != id);
+            if settings.active_profile.as_deref() == Some(id.as_str()) {
+                settings.active_profile = Some(settings.profiles[0].id.clone());
+            }
+            settings.save()?;
+            println!("삭제됨: {id}");
+        }
+    }
+    Ok(())
+}
+
 fn resolve_root(cli_root: Option<PathBuf>) -> PathBuf {
-    if let Some(r) = cli_root {
+    // 우선순위: --root > 설정의 KSP 경로(앱과 공유) > Steam 자동 감지
+    if let Some(r) = cli_root.or_else(|| Settings::load().ksp_root()) {
         return r;
     }
     let roots = game::detect_ksp_roots();
@@ -372,7 +508,7 @@ fn main() {
         cli.cmd,
         Cmd::Db {
             cmd: DbCmd::Index { .. } | DbCmd::Validate { .. } | DbCmd::List | DbCmd::Share { .. }
-        }
+        } | Cmd::Profile { .. }
     );
     let root = if needs_root {
         resolve_root(cli.root)
@@ -476,11 +612,19 @@ fn main() {
         }
         Cmd::Translate {
             mod_id,
+            profile,
             nick,
             install,
-            resume,
+            fresh,
         } => {
-            if let Err(e) = cmd_translate(&root, &mod_id, &nick, install, resume) {
+            if let Err(e) = cmd_translate(&root, &mod_id, profile.as_deref(), nick, install, fresh)
+            {
+                eprintln!("오류: {e}");
+                std::process::exit(1);
+            }
+        }
+        Cmd::Profile { cmd } => {
+            if let Err(e) = cmd_profile(cmd) {
                 eprintln!("오류: {e}");
                 std::process::exit(1);
             }

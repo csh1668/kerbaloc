@@ -18,6 +18,8 @@ pub mod packgen;
 pub mod pipeline;
 pub mod prompt;
 pub mod scan;
+pub mod settings;
 pub mod share;
 pub mod tokens;
+pub mod translate;
 pub mod validate;

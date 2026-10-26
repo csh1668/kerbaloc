@@ -31,6 +31,12 @@ pub struct ModGlossary {
     pub entries: Vec<ModGlossaryEntry>,
 }
 
+/// 모드 용어집 파일 위치: `<KSP>/KerbaLoc-glossaries/<ModId>.ko.json`
+pub fn path_for(root: &Path, mod_id: &str) -> std::path::PathBuf {
+    root.join("KerbaLoc-glossaries")
+        .join(format!("{mod_id}.ko.json"))
+}
+
 impl ModGlossary {
     pub fn load(path: &Path) -> anyhow::Result<ModGlossary> {
         Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)

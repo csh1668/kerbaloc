@@ -200,3 +200,104 @@ fn gemini_thinking_config_and_thought_tokens() {
     let (_, usage) = gemini::parse_response(body);
     assert_eq!(usage.output_tokens, 98, "사고 토큰도 출력으로 과금");
 }
+
+#[test]
+fn pick_model_rules() {
+    use kerbaloc_core::llm::pick_model;
+    let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let g = ProviderKind::Gemini;
+    // 지정값은 목록에 없어도 유지
+    assert_eq!(
+        pick_model(g, &list(&["a", "b"]), Some("custom")).as_deref(),
+        Some("custom")
+    );
+    // 미지정 → 기본 모델이 목록에 있으면 기본
+    let l = list(&["gemini-2.5-flash", "gemini-3.1-flash-lite"]);
+    assert_eq!(
+        pick_model(g, &l, None).as_deref(),
+        Some("gemini-3.1-flash-lite")
+    );
+    assert_eq!(
+        pick_model(g, &l, Some("  ")).as_deref(),
+        Some("gemini-3.1-flash-lite"),
+        "공백은 미지정"
+    );
+    // 기본 모델이 목록에 없으면 최상단
+    assert_eq!(
+        pick_model(g, &list(&["x", "y"]), None).as_deref(),
+        Some("x")
+    );
+    // 기본 모델이 없는 제공자(Codex)도 최상단
+    assert_eq!(
+        pick_model(ProviderKind::Codex, &list(&["gpt-6.1-sol"]), None).as_deref(),
+        Some("gpt-6.1-sol")
+    );
+    // 목록이 비면 기본 모델, 그것도 없으면 None
+    assert_eq!(
+        pick_model(g, &[], None).as_deref(),
+        Some("gemini-3.1-flash-lite")
+    );
+    assert_eq!(pick_model(ProviderKind::Ollama, &[], None), None);
+}
+
+#[test]
+fn model_choices_falls_back_on_error() {
+    use kerbaloc_core::llm::model_choices;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    // 키 없는 Gemini → 조회 실패 → fallback 목록 + 사유, 기본 모델 선택
+    let mc = rt.block_on(model_choices(&cfg(ProviderKind::Gemini, ""), None));
+    assert!(mc.error.is_some());
+    assert!(!mc.models.is_empty());
+    assert_eq!(mc.selected.as_deref(), Some("gemini-3.1-flash-lite"));
+    // Claude Code는 정적 별칭 목록
+    let mc = rt.block_on(model_choices(&cfg(ProviderKind::ClaudeCode, ""), None));
+    assert!(mc.error.is_none());
+    assert_eq!(mc.selected.as_deref(), Some("sonnet"));
+}
+
+#[test]
+fn catalog_is_consistent() {
+    use kerbaloc_core::llm::{default_model, provider_catalog};
+    let cat = provider_catalog();
+    assert_eq!(cat.len(), ProviderKind::ALL.len());
+    for info in &cat {
+        let k: ProviderKind = info.id.parse().unwrap();
+        assert_eq!(k.id(), info.id, "id 왕복");
+        let d = default_model(k);
+        if !d.is_empty() {
+            assert!(
+                info.fallback_models.contains(&d),
+                "{}: 기본 모델은 fallback에 포함",
+                info.id
+            );
+        }
+        assert!(
+            info.needs_api_key || info.cli_command.is_some() || info.default_base_url.is_some(),
+            "{}: 접속 수단 필요",
+            info.id
+        );
+    }
+}
+
+#[test]
+fn openai_style_ids_sorted_newest_first() {
+    use kerbaloc_core::llm::openai_style_ids;
+    let v: serde_json::Value = serde_json::from_str(
+        r#"{"data":[{"id":"old","created":1},{"id":"new","created":9},{"id":"mid","created":5}]}"#,
+    )
+    .unwrap();
+    assert_eq!(openai_style_ids(&v), ["new", "mid", "old"]);
+    // created 없으면(Anthropic) 원래 순서 유지
+    let v: serde_json::Value = serde_json::from_str(r#"{"data":[{"id":"b"},{"id":"a"}]}"#).unwrap();
+    assert_eq!(openai_style_ids(&v), ["b", "a"]);
+}
+
+#[test]
+fn codex_models_by_priority_listed_only() {
+    let json = r#"{"models":[
+        {"slug":"gpt-6-astra","visibility":"list","priority":2},
+        {"slug":"gpt-reserve","visibility":"hide","priority":4},
+        {"slug":"gpt-6.1-sol","visibility":"list","priority":1}]}"#;
+    assert_eq!(codex::parse_models(json), ["gpt-6.1-sol", "gpt-6-astra"]);
+    assert!(codex::parse_models("not json").is_empty());
+}

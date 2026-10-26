@@ -62,6 +62,33 @@ pub fn exec_args(model: &str, effort: Option<&str>) -> Vec<String> {
     args
 }
 
+/// `codex debug models` 카탈로그(JSON)에서 선택 가능한 모델 slug를 priority 순으로.
+/// visibility가 "list"가 아닌 내부용 모델은 뺀다.
+pub fn parse_models(json: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<Value>(json.trim()) else {
+        return vec![];
+    };
+    let mut models: Vec<(i64, String)> = v
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter(|m| m.get("visibility").and_then(Value::as_str) == Some("list"))
+                .filter_map(|m| {
+                    let slug = m.get("slug")?.as_str()?.to_string();
+                    let prio = m
+                        .get("priority")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(i64::MAX);
+                    Some((prio, slug))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    models.sort_by_key(|(p, _)| *p);
+    models.into_iter().map(|(_, s)| s).collect()
+}
+
 /// JSONL 이벤트에서 (마지막 agent_message 텍스트, 사용량) 추출.
 /// item 타입 "error"는 설정 경고 등 비치명적 알림이라 무시한다. turn.failed는 실패,
 /// 최상위 error 이벤트(재연결 알림일 수 있음)는 응답이 끝내 없을 때만 실패 사유로 쓴다.

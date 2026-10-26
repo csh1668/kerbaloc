@@ -222,93 +222,71 @@
     workers: null,
   });
 
-  // ── 프로필·제공자/모델 목록 ──
-  const PROVIDERS = [
-    { id: "gemini", label: "Gemini API" },
-    { id: "openai", label: "OpenAI API" },
-    { id: "anthropic", label: "Claude API (Anthropic)" },
-    { id: "claude-code", label: "Claude Code CLI (claude -p)" },
-    { id: "codex", label: "Codex CLI (codex exec)" },
-    { id: "ollama", label: "Ollama" },
-    { id: "lmstudio", label: "LM Studio" },
-  ];
-  // API 조회 실패 시 폴백 목록
-  const FALLBACK_MODELS: Record<string, string[]> = {
-    gemini: ["gemini-3.1-flash-lite", "gemini-3-flash", "gemini-3-pro"],
-    openai: ["gpt-5.1", "gpt-5.1-mini", "gpt-5.1-nano"],
-    anthropic: ["claude-haiku-4-5", "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
-    "claude-code": ["sonnet", "opus", "haiku", "fable"],
-    codex: [],
-    ollama: [],
-    lmstudio: [],
-  };
-  const DEFAULT_MODELS: Record<string, string> = {
-    gemini: "gemini-3.1-flash-lite",
-    openai: "gpt-5.1-mini",
-    anthropic: "claude-haiku-4-5",
-    "claude-code": "sonnet",
-    codex: "",
-    ollama: "",
-    lmstudio: "",
-  };
-  // 추론 강도 — 제공자별로 그대로 전달되는 값 (빈 값 = 보내지 않음)
-  const REASONING: Record<string, { label: string; levels: string[]; hint: string }> = {
-    gemini: { label: "사고 수준 (thinkingLevel)", levels: ["minimal", "low", "medium", "high"], hint: "Gemini 3 계열" },
-    openai: { label: "추론 강도 (reasoning_effort)", levels: ["none", "minimal", "low", "medium", "high", "xhigh"], hint: "추론 모델만 — 지원 값은 모델마다 다릅니다" },
-    anthropic: { label: "노력 수준 (effort)", levels: ["low", "medium", "high", "xhigh", "max"], hint: "Haiku 4.5 등 구모델은 미지원" },
-    "claude-code": { label: "노력 수준 (--effort)", levels: ["low", "medium", "high", "xhigh", "max"], hint: "" },
-    codex: { label: "추론 강도 (model_reasoning_effort)", levels: ["minimal", "low", "medium", "high", "xhigh"], hint: "" },
-    ollama: { label: "추론 강도 (reasoning_effort)", levels: ["low", "medium", "high"], hint: "지원 모델만 (gpt-oss 등)" },
-    lmstudio: { label: "추론 강도 (reasoning_effort)", levels: ["low", "medium", "high"], hint: "지원 모델만 (gpt-oss 등)" },
-  };
-  const API_KEY_PROVIDERS = ["gemini", "openai", "anthropic"];
-  const DEFAULT_URLS: Record<string, string> = {
-    gemini: "https://generativelanguage.googleapis.com/v1beta",
-    openai: "https://api.openai.com/v1",
-    anthropic: "https://api.anthropic.com",
-    ollama: "http://localhost:11434/v1",
-    lmstudio: "http://localhost:1234/v1",
-  };
-  const CLI_COMMANDS: Record<string, string> = { "claude-code": "claude", codex: "codex" };
+  // ── 프로필·제공자/모델 목록 — 제공자 메타데이터는 코어 카탈로그(SSOT)에서 받는다 ──
+  interface ProviderInfo {
+    id: string;
+    label: string;
+    default_model: string;
+    fallback_models: string[];
+    needs_api_key: boolean;
+    default_base_url: string | null;
+    cli_command: string | null;
+    reasoning_label: string;
+    reasoning_levels: string[];
+    reasoning_hint: string;
+  }
+  let catalog = $state<ProviderInfo[]>([]);
+  const providerInfo = (id: string | undefined) => catalog.find((c) => c.id === id);
   let modelList = $state<string[]>([]);
   let modelListLoading = $state(false);
+  let modelListError = $state<string | null>(null);
 
   // 드롭다운에서 고른 프로필 = 번역에 쓰는 프로필 = 편집 대상
   let activeProfile = $derived(
     settings.profiles.find((p) => p.id === settings.active_profile) ?? settings.profiles[0],
   );
+  let activeInfo = $derived(providerInfo(activeProfile?.provider));
 
+  // 목록 조회 + 선택은 코어 규칙(고른 값 → 기본 모델 → 목록 최상단)을 그대로 따른다
   async function loadModelList() {
     const p = activeProfile;
     if (!p) return;
+    const key = `${p.id}|${p.provider}`;
     modelListLoading = true;
+    modelListError = null;
     try {
-      modelList = await invoke("list_models_cmd", { profile: p });
-      if (modelList.length === 0) modelList = FALLBACK_MODELS[p.provider] ?? [];
-    } catch {
-      modelList = FALLBACK_MODELS[p.provider] ?? [];
+      const r: { models: string[]; selected: string | null; error: string | null } = await invoke(
+        "list_models_cmd",
+        { profile: p },
+      );
+      if (`${activeProfile?.id}|${activeProfile?.provider}` !== key) return; // 응답 전에 전환됨
+      modelList = r.models;
+      modelListError = r.error;
+      if (r.selected) p.model = r.selected;
+    } catch (e) {
+      modelListError = String(e);
     } finally {
       modelListLoading = false;
     }
   }
 
-  function openSettings() {
-    if (!settings.active_profile && settings.profiles[0]) settings.active_profile = settings.profiles[0].id;
-    modelList = FALLBACK_MODELS[activeProfile?.provider ?? ""] ?? [];
-    showSettings = true;
+  function onActiveProfileChange() {
+    modelList = activeInfo?.fallback_models ?? [];
     void loadModelList();
   }
 
-  function onActiveProfileChange() {
-    modelList = FALLBACK_MODELS[activeProfile?.provider ?? ""] ?? [];
-    void loadModelList();
+  function openSettings() {
+    if (!settings.active_profile && settings.profiles[0]) settings.active_profile = settings.profiles[0].id;
+    showSettings = true;
+    onActiveProfileChange();
   }
 
   function onProviderChange() {
     const p = activeProfile;
     if (!p) return;
-    p.model = DEFAULT_MODELS[p.provider] || null;
-    p.reasoning = null; // 값 체계가 제공자마다 다름
+    // 값 체계가 제공자마다 다름 — 모델은 비워 두면 목록 조회 시 기본/최상단으로 채워진다
+    p.model = null;
+    p.reasoning = null;
     p.base_url = null;
     p.command = null;
     onActiveProfileChange();
@@ -319,16 +297,16 @@
     const base: LlmProfile = from
       ? { ...from, name: `${from.name} 사본` }
       : {
+          id,
           name: "새 프로필",
-          provider: "gemini",
-          model: DEFAULT_MODELS.gemini,
+          provider: catalog[0]?.id ?? "gemini",
+          model: null,
           api_key: null,
           base_url: null,
           reasoning: null,
           command: null,
           price_in: null,
           price_out: null,
-          id,
         };
     settings.profiles.push({ ...base, id });
     settings.active_profile = id;
@@ -520,6 +498,7 @@
 
   onMount(async () => {
     settings = await invoke("load_settings");
+    catalog = await invoke("provider_catalog");
     await listen<{ mod_id: string; done: number; total: number; cost: number }>(
       "translate-progress",
       (e) => {
@@ -892,7 +871,7 @@
         <div class="model-row">
           <select bind:value={settings.active_profile} onchange={onActiveProfileChange}>
             {#each settings.profiles as p (p.id)}
-              <option value={p.id}>{p.name} — {PROVIDERS.find((x) => x.id === p.provider)?.label ?? p.provider}</option>
+              <option value={p.id}>{p.name} — {providerInfo(p.provider)?.label ?? p.provider}</option>
             {/each}
           </select>
           <button onclick={() => addProfile()}>추가</button>
@@ -907,55 +886,61 @@
           </label>
           <label>유형
             <select bind:value={activeProfile.provider} onchange={onProviderChange}>
-              {#each PROVIDERS as p (p.id)}
-                <option value={p.id}>{p.label}</option>
+              {#each catalog as c (c.id)}
+                <option value={c.id}>{c.label}</option>
               {/each}
             </select>
           </label>
         </div>
-        <label>모델 — 목록에서 선택하거나 직접 입력
+        <label>모델
           <div class="model-row">
-            <input
-              list="model-options"
-              bind:value={activeProfile.model}
-              placeholder={DEFAULT_MODELS[activeProfile.provider] ||
-                (activeProfile.provider === "codex" ? "비우면 config.toml 기본 모델" : "모델 ID 입력")}
-            />
-            <button disabled={modelListLoading} onclick={loadModelList} title="제공자 API에서 모델 목록 조회">
+            {#if modelList.length > 0}
+              <select bind:value={activeProfile.model}>
+                {#if activeProfile.model && !modelList.includes(activeProfile.model)}
+                  <option value={activeProfile.model}>{activeProfile.model} (목록에 없음)</option>
+                {/if}
+                {#each modelList as m (m)}
+                  <option value={m}>{m}{m === activeInfo?.default_model ? " (기본)" : ""}</option>
+                {/each}
+              </select>
+            {:else}
+              <input bind:value={activeProfile.model} placeholder="모델 ID 입력" />
+            {/if}
+            <button disabled={modelListLoading} onclick={loadModelList} title="제공자에서 모델 목록 조회">
               {modelListLoading ? "조회 중…" : "목록 갱신"}
             </button>
           </div>
-          <datalist id="model-options">
-            {#each modelList as m (m)}<option value={m}></option>{/each}
-          </datalist>
         </label>
-        {#if API_KEY_PROVIDERS.includes(activeProfile.provider)}
+        {#if modelListError}
+          <p class="hint">목록 조회 실패 — 기본 후보를 표시합니다: {modelListError}</p>
+        {/if}
+        {#if activeInfo?.needs_api_key}
           <label>API 키
-            <input type="password" bind:value={activeProfile.api_key} />
+            <input type="password" bind:value={activeProfile.api_key} onchange={loadModelList} />
           </label>
         {/if}
-        {#if DEFAULT_URLS[activeProfile.provider]}
+        {#if activeInfo?.default_base_url}
           <label>API URL (비우면 기본값)
-            <input bind:value={activeProfile.base_url} placeholder={DEFAULT_URLS[activeProfile.provider]} />
+            <input bind:value={activeProfile.base_url} placeholder={activeInfo.default_base_url} onchange={loadModelList} />
           </label>
         {/if}
-        {#if CLI_COMMANDS[activeProfile.provider]}
-          <label>실행 파일 (비우면 PATH의 {CLI_COMMANDS[activeProfile.provider]})
-            <input bind:value={activeProfile.command} placeholder={CLI_COMMANDS[activeProfile.provider]} />
+        {#if activeInfo?.cli_command}
+          <label>실행 파일 (비우면 PATH의 {activeInfo.cli_command})
+            <input bind:value={activeProfile.command} placeholder={activeInfo.cli_command} onchange={loadModelList} />
           </label>
           <p class="hint">로컬에 설치·로그인된 CLI를 사용합니다 (구독 기반 — 기본 단가 0).</p>
         {/if}
-        {#if REASONING[activeProfile.provider]}
-          <label>{REASONING[activeProfile.provider].label}
+        {#if activeInfo && activeInfo.reasoning_levels.length > 0}
+          <label>{activeInfo.reasoning_label}
             <select bind:value={activeProfile.reasoning}>
               <option value={null}>기본값 (보내지 않음)</option>
-              {#each REASONING[activeProfile.provider].levels as lv (lv)}
+              {#each activeInfo.reasoning_levels as lv (lv)}
                 <option value={lv}>{lv}</option>
               {/each}
             </select>
           </label>
-          {#if REASONING[activeProfile.provider].hint}
-            <p class="hint">{REASONING[activeProfile.provider].hint}</p>
+          {#if activeInfo.reasoning_hint}
+            <p class="hint">{activeInfo.reasoning_hint}</p>
           {/if}
         {/if}
         <div class="grid2">

@@ -18,8 +18,11 @@ KSP(Kerbal Space Program) 1.12.x 한국어화 도구 모음.
     kerbaloc remove <ModId>
     kerbaloc enable | disable    # 언어 ko ↔ en-us
     kerbaloc validate <팩 디렉터리>     # 팩 검증 (CI에서도 동일 사용)
-    kerbaloc translate <ModId> [--nick 이름] [--install] [--resume]
-                                 # Gemini 번역 → 검증 루프 → 팩 생성 (GEMINI_API_KEY 필요)
+    kerbaloc translate <ModId> [--profile 이름] [--nick 이름] [--install] [--fresh]
+                                 # LLM 번역 → 검증 루프 → 팩 생성 (같은 소스·모델 잡은 자동 재개)
+    kerbaloc profile list | use <프로필> | models [프로필] | remove <프로필>
+    kerbaloc profile set <프로필> provider=gemini api_key=… model=… reasoning=…
+                                 # LLM 프로필 — 스튜디오 앱과 같은 settings.json 공유
     kerbaloc db list             # 원격 번역 DB 팩 목록 (계정 불필요)
     kerbaloc db install <ModId>  # DB에서 다운로드·해시 검증·원문 대조·설치
     kerbaloc db validate|index <레포경로>   # kerbaloc-db CI가 사용하는 서브커맨드
