@@ -22,7 +22,7 @@ enum Cmd {
     Enable,
     /// 게임 언어를 en-us로 복원
     Disable,
-    /// GameData 스캔: 번역 대상 모드 목록
+    /// GameData 스캔: 번역 대상 모드와 부품 이름·설명 필드 수
     Scan,
     /// 구방식 번역 오염(en-us 노드 내 한글) 감지 및 백업
     Doctor {
@@ -533,17 +533,24 @@ fn main() {
         }
         Cmd::Scan => {
             let units = scan::scan_gamedata(&root);
-            println!("{:<44} {:<12} {:>6}  해시", "ModId", "버전", "키수");
+            println!(
+                "{:<44} {:<12} {:>6} {:>8}  해시",
+                "ModId", "버전", "키수", "부품필드"
+            );
             for u in &units {
                 println!(
-                    "{:<44} {:<12} {:>6}  {}",
+                    "{:<44} {:<12} {:>6} {:>8}  {}",
                     u.mod_id,
                     u.version.raw.as_deref().unwrap_or("-"),
                     u.entries.len(),
+                    u.part_fields.len(),
                     &u.source_hash[..22]
                 );
             }
             println!("총 {}개 유닛", units.len());
+            if units.iter().any(|u| !u.part_fields.is_empty()) {
+                println!("부품 이름·설명 필드는 전체 키 수에 포함됩니다. 부품 텍스트 번역팩 설치에는 ModuleManager가 필요하며, 팩 설치·제거 후 게임을 재시작하세요.");
+            }
         }
         Cmd::Doctor { backup } => {
             let items = kerbaloc_core::doctor::detect_pollution(&root);

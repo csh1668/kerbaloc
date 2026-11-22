@@ -8,6 +8,7 @@
     display_name: string;
     version: string | null;
     keys: number;
+    part_keys: number;
     source_hash: string;
     installed: boolean;
     blacklisted: string | null;
@@ -582,6 +583,13 @@
     </button>
   </div>
 
+  {#if units.some((u) => u.part_keys > 0)}
+    <p class="hint">
+      설정 파일의 부품 이름·설명도 번역 대상에 포함됩니다. 부품 텍스트 번역팩 설치에는 ModuleManager가 필요하며,
+      팩 설치·제거 후 게임을 재시작하세요.
+    </p>
+  {/if}
+
   <table>
     <thead>
       <tr>
@@ -610,7 +618,12 @@
           </td>
           <td title={u.mod_id}>{u.display_name}</td>
           <td>{u.version ?? "-"}</td>
-          <td class="num">{u.keys}</td>
+          <td class="num">
+            {u.keys}
+            {#if u.part_keys > 0}
+              <br /><span class="hint" title="전체 키 수에 포함된 PART 이름·설명 필드 수">부품 필드 {u.part_keys}</span>
+            {/if}
+          </td>
           <td>
             {#if u.blacklisted}<span class="badge err" title={u.blacklisted}>번역 차단</span>
             {:else if u.installed}<span class="badge ok">설치됨</span>

@@ -15,6 +15,7 @@ pub mod loc;
 pub mod modglossary;
 pub mod pack;
 pub mod packgen;
+pub mod parts;
 pub mod pipeline;
 pub mod prompt;
 pub mod scan;
