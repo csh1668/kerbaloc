@@ -1,0 +1,46 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      # The desktop toolchain file pins Windows; core/CLI are also portable.
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +stable fmt --all --check
+      - run: cargo +stable test --locked -p kerbaloc-core -p kerbaloc-cli
+      - run: cargo +stable clippy --locked -p kerbaloc-core -p kerbaloc-cli --all-targets -- -D warnings
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: kerbaloc-app/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+        working-directory: kerbaloc-app
+      - run: npm run check
+        working-directory: kerbaloc-app
+      - run: npm run build
+        working-directory: kerbaloc-app
+      - run: cargo test --locked --workspace
