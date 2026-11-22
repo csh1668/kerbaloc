@@ -187,7 +187,8 @@ fn literal_parts_use_the_translation_install_and_sharing_pipeline() {
     use std::fs;
 
     let root = tempfile::tempdir().unwrap();
-    let original = "PART\n{\nname = demo-engine\ntitle = Demo engine\ndescription = A small engine.\n}\n";
+    let original =
+        "PART\n{\nname = demo-engine\ntitle = Demo engine\ndescription = A small engine.\n}\n";
     let source_path = root.path().join("GameData/Demo/engine.cfg");
     fs::create_dir_all(source_path.parent().unwrap()).unwrap();
     fs::write(&source_path, original).unwrap();
@@ -204,19 +205,30 @@ fn literal_parts_use_the_translation_install_and_sharing_pipeline() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let run = || {
         rt.block_on(translate_mod(
-            root.path(), &u, &fake, &opts(false), Arc::new(Semaphore::new(1)),
+            root.path(),
+            &u,
+            &fake,
+            &opts(false),
+            Arc::new(Semaphore::new(1)),
             &|_, _, _| {},
-        )).map_err(|(e, _)| e).unwrap()
+        ))
+        .map_err(|(e, _)| e)
+        .unwrap()
     };
     let out = run();
     assert_eq!(out.report.ok.len(), 2);
     let calls = fake.translate_calls.load(Ordering::SeqCst);
     run();
     assert_eq!(fake.translate_calls.load(Ordering::SeqCst), calls);
-    assert!(pack::validate_pack(&out.pack_dir, Some(&u.entries)).errors.is_empty());
+    assert!(pack::validate_pack(&out.pack_dir, Some(&u.entries))
+        .errors
+        .is_empty());
     let title = parts::key(&u.mod_id, "demo-engine", "title");
     let english = fs::read_to_string(out.pack_dir.join("Localization/en-us.cfg")).unwrap();
-    assert_eq!(loc::extract_localization(&cfg::parse(&english).unwrap(), "en-us")[&title], "Demo engine");
+    assert_eq!(
+        loc::extract_localization(&cfg::parse(&english).unwrap(), "en-us")[&title],
+        "Demo engine"
+    );
     let dest = pack::install_pack(root.path(), &out.pack_dir).unwrap();
     assert!(dest.join("Patches/parts.cfg").is_file());
     game::set_language(root.path(), "ko").unwrap();
@@ -225,17 +237,34 @@ fn literal_parts_use_the_translation_install_and_sharing_pipeline() {
     assert_eq!(game::read_language(root.path()).as_deref(), Some("en-us"));
     assert!(dest.join("Localization/en-us.cfg").is_file());
     assert_eq!(fs::read_to_string(&source_path).unwrap(), original);
-    assert_eq!(scan::scan_gamedata(root.path())[0].source_hash, u.source_hash);
+    assert_eq!(
+        scan::scan_gamedata(root.path())[0].source_hash,
+        u.source_hash
+    );
 
     let payload = share::build_payload(&out.pack_dir, "tester").unwrap();
-    let names: Vec<_> = payload["files"].as_array().unwrap().iter()
-        .map(|f| f["path"].as_str().unwrap()).collect();
-    for required in ["pack.json", "Localization/ko.cfg", "Localization/en-us.cfg", "Patches/parts.cfg"] {
+    let names: Vec<_> = payload["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    for required in [
+        "pack.json",
+        "Localization/ko.cfg",
+        "Localization/en-us.cfg",
+        "Patches/parts.cfg",
+    ] {
         assert!(names.contains(&required), "share payload lost {required}");
     }
     let db = tempfile::tempdir().unwrap();
-    let meta: serde_json::Value = serde_json::from_str(&fs::read_to_string(out.pack_dir.join("pack.json")).unwrap()).unwrap();
-    let variant = db.path().join("packs").join(&u.mod_id).join("ko/variants")
+    let meta: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.pack_dir.join("pack.json")).unwrap()).unwrap();
+    let variant = db
+        .path()
+        .join("packs")
+        .join(&u.mod_id)
+        .join("ko/variants")
         .join(meta["variant_id"].as_str().unwrap());
     for name in &names {
         let target = variant.join(name);
@@ -244,7 +273,13 @@ fn literal_parts_use_the_translation_install_and_sharing_pipeline() {
     }
     assert!(dbrepo::validate_repo(db.path()).errors.is_empty());
     let index = dbrepo::build_index(db.path()).unwrap();
-    assert_eq!(index["packs"][0]["variants"][0]["files"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        index["packs"][0]["variants"][0]["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
     assert!(pack::remove_pack(root.path(), "ko", &u.mod_id).unwrap());
     assert!(!dest.exists());
     assert_eq!(fs::read_to_string(source_path).unwrap(), original);

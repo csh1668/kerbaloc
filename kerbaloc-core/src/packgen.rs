@@ -1,7 +1,7 @@
 use crate::cfg;
 use crate::pack::{
-    generated_cfg_errors, generated_parts_cfg, localization_cfg, safe_component, validate_generated_part,
-    validate_pack, PackMeta,
+    generated_cfg_errors, generated_parts_cfg, localization_cfg, safe_component,
+    validate_generated_part, validate_pack, PackMeta,
 };
 use crate::scan::ModUnit;
 use std::collections::BTreeMap;
@@ -46,8 +46,14 @@ pub fn build_pack(
     variant_id: &str,
     model_name: &str,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(!translations.is_empty(), "번역 항목이 비어 있음 — 기존 팩을 유지합니다");
-    anyhow::ensure!(safe_component(&unit.mod_id), "안전하지 않은 모드 ID — 기존 팩을 유지합니다");
+    anyhow::ensure!(
+        !translations.is_empty(),
+        "번역 항목이 비어 있음 — 기존 팩을 유지합니다"
+    );
+    anyhow::ensure!(
+        safe_component(&unit.mod_id),
+        "안전하지 않은 모드 ID — 기존 팩을 유지합니다"
+    );
     let mut emitted_parts = BTreeMap::new();
     for (key, translated) in translations {
         let source = unit

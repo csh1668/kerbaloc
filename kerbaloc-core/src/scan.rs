@@ -58,11 +58,11 @@ struct Owner {
     version: VersionInfo,
 }
 
-/// top 폴더 하위 전체의 .version 중 대상 파일과 가장 잘 맞는 것 선택:
-/// ① 파일의 조상 디렉터리에 있는 것 중 가장 깊은 것
-/// ② 없으면 top 폴더 하위 어디든 가장 얕은 것 (Versioning/ 등 실측 패턴)
-fn find_avc(top_dir: &Path, file: &Path) -> Option<avc::AvcInfo> {
-    let mut best: Option<(avc::AvcInfo, bool, i64)> = None; // (info, is_ancestor, score)
+// Parsed once per top folder for each scan, including folders with no usable
+// version files. Ownership queries only compare these cached paths afterward.
+type AvcCache = BTreeMap<PathBuf, Vec<(PathBuf, avc::AvcInfo)>>;
+
+fn load_avc(top_dir: &Path) -> Vec<(PathBuf, avc::AvcInfo)> {
     let mut versions: Vec<PathBuf> = WalkDir::new(top_dir)
         .into_iter()
         .filter_map(Result::ok)
@@ -70,6 +70,7 @@ fn find_avc(top_dir: &Path, file: &Path) -> Option<avc::AvcInfo> {
         .map(|entry| entry.into_path())
         .collect();
     versions.sort();
+    let mut parsed = Vec::new();
     for path in versions {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
@@ -77,6 +78,25 @@ fn find_avc(top_dir: &Path, file: &Path) -> Option<avc::AvcInfo> {
         let Some(info) = avc::parse_version_file(&text) else {
             continue;
         };
+        parsed.push((path, info));
+    }
+    parsed
+}
+
+/// top 폴더 하위 전체의 .version 중 대상 파일과 가장 잘 맞는 것 선택:
+/// ① 파일의 조상 디렉터리에 있는 것 중 가장 깊은 것
+/// ② 없으면 top 폴더 하위 어디든 가장 얕은 것 (Versioning/ 등 실측 패턴)
+/// 같은 깊이에서는 정렬된 경로 중 첫 항목을 유지한다.
+fn find_avc<'a>(
+    top_dir: &Path,
+    file: &Path,
+    cache: &'a mut AvcCache,
+) -> Option<&'a avc::AvcInfo> {
+    let versions = cache
+        .entry(top_dir.to_path_buf())
+        .or_insert_with(|| load_avc(top_dir));
+    let mut best: Option<(&avc::AvcInfo, bool, i64)> = None; // (info, is_ancestor, score)
+    for (path, info) in versions.iter() {
         let parent = path.parent().unwrap();
         let is_ancestor = file.starts_with(parent);
         let depth = parent.components().count() as i64;
@@ -92,7 +112,12 @@ fn find_avc(top_dir: &Path, file: &Path) -> Option<avc::AvcInfo> {
     best.map(|(i, _, _)| i)
 }
 
-fn resolve_owner(ksp_root: &Path, file: &Path, ckan: Option<&CkanRegistry>) -> Owner {
+fn resolve_owner(
+    ksp_root: &Path,
+    file: &Path,
+    ckan: Option<&CkanRegistry>,
+    avc_cache: &mut AvcCache,
+) -> Owner {
     let rel = file
         .strip_prefix(ksp_root)
         .unwrap()
@@ -150,7 +175,7 @@ fn resolve_owner(ksp_root: &Path, file: &Path, ckan: Option<&CkanRegistry>) -> O
     }
     let top_dir = ksp_root.join("GameData").join(&top);
     if top_dir.is_dir() {
-        if let Some(info) = find_avc(&top_dir, file) {
+        if let Some(info) = find_avc(&top_dir, file, avc_cache) {
             let version = VersionInfo {
                 raw: info.version.clone(),
                 source: "avc",
@@ -215,11 +240,16 @@ struct Group {
 pub fn scan_gamedata(ksp_root: &Path) -> Vec<ModUnit> {
     let gamedata = ksp_root.join("GameData");
     let ckan = CkanRegistry::load(ksp_root);
+    let mut avc_cache = AvcCache::new();
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     let mut paths: Vec<PathBuf> = WalkDir::new(&gamedata)
         .into_iter()
         .filter_entry(|entry| {
-            entry.depth() != 1 || !entry.file_name().to_string_lossy().eq_ignore_ascii_case("KerbaLoc")
+            entry.depth() != 1
+                || !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case("KerbaLoc")
         })
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
@@ -263,7 +293,7 @@ pub fn scan_gamedata(ksp_root: &Path) -> Vec<ModUnit> {
     }
 
     for file in scanned {
-        let owner = resolve_owner(ksp_root, &file.path, ckan.as_ref());
+        let owner = resolve_owner(ksp_root, &file.path, ckan.as_ref(), &mut avc_cache);
         let mut entries = file.entries;
         let mut part_fields = BTreeMap::new();
         for part_field in file.part_fields {
@@ -280,15 +310,13 @@ pub fn scan_gamedata(ksp_root: &Path) -> Vec<ModUnit> {
         if entries.is_empty() {
             continue;
         }
-        let g = groups
-            .entry(owner.key.clone())
-            .or_insert_with(|| Group {
-                owner,
-                files: vec![],
-                entries: BTreeMap::new(),
-                part_fields: BTreeMap::new(),
-                official_langs: vec![],
-            });
+        let g = groups.entry(owner.key.clone()).or_insert_with(|| Group {
+            owner,
+            files: vec![],
+            entries: BTreeMap::new(),
+            part_fields: BTreeMap::new(),
+            official_langs: vec![],
+        });
         g.files.push(file.path);
         g.entries.extend(entries);
         g.part_fields.extend(part_fields);

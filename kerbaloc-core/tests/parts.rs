@@ -6,7 +6,10 @@ fn part_with_value(value: &str) -> cfg::Node {
         values: vec![],
         children: vec![cfg::Node {
             name: "PART".into(),
-            values: vec![("name".into(), "literal.part-1_2".into()), ("title".into(), value.into())],
+            values: vec![
+                ("name".into(), "literal.part-1_2".into()),
+                ("title".into(), value.into()),
+            ],
             children: vec![],
         }],
     }
@@ -21,11 +24,16 @@ fn keys_use_full_digest_and_distinguish_identity_components() {
         .strip_suffix("_title")
         .unwrap();
     assert_eq!(digest.len(), 64);
-    assert!(digest.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
+    assert!(digest
+        .bytes()
+        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
     assert_ne!(key, parts::key("OtherMod", "engine", "title"));
     assert_ne!(key, parts::key("Mod", "Engine", "title"));
     assert_ne!(key, parts::key("Mod", "engine", "description"));
-    assert_ne!(parts::key("ab", "c", "title"), parts::key("a", "bc", "title"));
+    assert_ne!(
+        parts::key("ab", "c", "title"),
+        parts::key("a", "bc", "title")
+    );
 }
 
 #[test]
@@ -34,8 +42,24 @@ fn part_names_are_literal_ascii_selectors() {
         assert!(parts::is_safe_part_name(name), "{name:?}");
     }
     for name in [
-        "", " engine", "engine ", "a b", "a,b", "a*", "a?", "a[b]", "a/b", "a\\b",
-        "@a", "$a", "#LOC_a", "a:NEEDS[b]", "a|b", "한글", "a\0b", "a\nb",
+        "",
+        " engine",
+        "engine ",
+        "a b",
+        "a,b",
+        "a*",
+        "a?",
+        "a[b]",
+        "a/b",
+        "a\\b",
+        "@a",
+        "$a",
+        "#LOC_a",
+        "a:NEEDS[b]",
+        "a|b",
+        "한글",
+        "a\0b",
+        "a\nb",
     ] {
         assert!(!parts::is_safe_part_name(name), "{name:?}");
     }
@@ -90,7 +114,10 @@ WRAPPER
     assert_eq!(fields[0].field, "title");
     assert_eq!(fields[0].source, "Main Engine");
     assert_eq!(fields[1].field, "description");
-    assert_eq!(fields[1].source, "A <b>compact</b> engine.\\nReady for flight.");
+    assert_eq!(
+        fields[1].source,
+        "A <b>compact</b> engine.\\nReady for flight."
+    );
 }
 
 #[test]
@@ -140,14 +167,34 @@ PART
 #[test]
 fn unsafe_cfg_values_and_controls_are_not_translation_input() {
     for value in [
-        "", "   ", "#LOC_title", " #LOC_title", "#$../title$", "$variable$", "@/title",
-        "value @/target", "value { body }", "value // comment", "two\nlines", "two\rlines",
-        "tab\tvalue", "nul\0value", "escape\u{1b}value",
+        "",
+        "   ",
+        "#LOC_title",
+        " #LOC_title",
+        "#$../title$",
+        "$variable$",
+        "@/title",
+        "value @/target",
+        "value { body }",
+        "value // comment",
+        "two\nlines",
+        "two\rlines",
+        "tab\tvalue",
+        "nul\0value",
+        "escape\u{1b}value",
     ] {
-        assert!(parts::extract(&part_with_value(value)).is_empty(), "{value:?}");
+        assert!(
+            parts::extract(&part_with_value(value)).is_empty(),
+            "{value:?}"
+        );
     }
-    assert_eq!(parts::extract(&part_with_value("Literal \\n and <color=#ffffff>white</color>"))[0].source,
-        "Literal \\n and <color=#ffffff>white</color>");
+    assert_eq!(
+        parts::extract(&part_with_value(
+            "Literal \\n and <color=#ffffff>white</color>"
+        ))[0]
+            .source,
+        "Literal \\n and <color=#ffffff>white</color>"
+    );
 }
 
 #[test]
@@ -158,5 +205,8 @@ fn part_field_metadata_roundtrips_without_changing_source() {
         source: "A pressure-fed engine.\\nKeep upright.".into(),
     };
     let json = serde_json::to_string(&field).unwrap();
-    assert_eq!(serde_json::from_str::<parts::PartField>(&json).unwrap(), field);
+    assert_eq!(
+        serde_json::from_str::<parts::PartField>(&json).unwrap(),
+        field
+    );
 }

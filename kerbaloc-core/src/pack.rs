@@ -40,7 +40,10 @@ pub(crate) fn localization_cfg(lang: &str, entries: &BTreeMap<String, String>) -
             values: vec![],
             children: vec![cfg::Node {
                 name: lang.into(),
-                values: entries.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                values: entries
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
                 children: vec![],
             }],
         }],
@@ -72,7 +75,9 @@ pub(crate) fn validate_generated_part(
         || source.contains('$')
         || source.contains("@/")
     {
-        return Err(format!("{key}: PART 영어 폴백 값이 안전한 리터럴 원문이 아님"));
+        return Err(format!(
+            "{key}: PART 영어 폴백 값이 안전한 리터럴 원문이 아님"
+        ));
     }
     Ok(())
 }
@@ -120,15 +125,30 @@ pub(crate) fn generated_cfg_errors(dir: &Path) -> Vec<String> {
             }
         };
         if entry.file_type().is_symlink() {
-            errors.push(format!("생성 PART 팩은 심볼릭 링크를 포함할 수 없음: {}", entry.path().display()));
+            errors.push(format!(
+                "생성 PART 팩은 심볼릭 링크를 포함할 수 없음: {}",
+                entry.path().display()
+            ));
         }
         if !entry.file_type().is_file()
-            || !entry.path().extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("cfg"))
+            || !entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("cfg"))
         {
             continue;
         }
-        let relative = entry.path().strip_prefix(dir).unwrap().to_string_lossy().replace('\\', "/");
-        if !matches!(relative.as_str(), "Localization/ko.cfg" | "Localization/en-us.cfg" | "Patches/parts.cfg") {
+        let relative = entry
+            .path()
+            .strip_prefix(dir)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !matches!(
+            relative.as_str(),
+            "Localization/ko.cfg" | "Localization/en-us.cfg" | "Patches/parts.cfg"
+        ) {
             errors.push(format!("생성 PART 팩에 허용되지 않은 추가 CFG: {relative}"));
         }
     }
@@ -158,7 +178,9 @@ fn validate_generated_files(
         return;
     };
     if meta.lang != "ko" {
-        report.errors.push("생성 PART 팩의 대상 언어는 ko여야 함".into());
+        report
+            .errors
+            .push("생성 PART 팩의 대상 언어는 ko여야 함".into());
     }
     report.errors.extend(generated_cfg_errors(dir));
     // This extension is intentionally exact, while old pack.json fields stay compatible.
@@ -177,18 +199,19 @@ fn validate_generated_files(
                     .into_iter()
                     .all(|name| object.get(name).is_some_and(serde_json::Value::is_string))
         }) {
-            report
-                .errors
-                .push(format!("{key}: part_fields의 필드는 part_name/field/source만 허용"));
+            report.errors.push(format!(
+                "{key}: part_fields의 필드는 part_name/field/source만 허용"
+            ));
         }
     }
-    let fields: BTreeMap<String, parts::PartField> = match serde_json::from_value(raw_fields.clone()) {
-        Ok(fields) => fields,
-        Err(error) => {
-            report.errors.push(format!("part_fields: {error}"));
-            return;
-        }
-    };
+    let fields: BTreeMap<String, parts::PartField> =
+        match serde_json::from_value(raw_fields.clone()) {
+            Ok(fields) => fields,
+            Err(error) => {
+                report.errors.push(format!("part_fields: {error}"));
+                return;
+            }
+        };
     let mut valid_mapping = true;
     let mut fallback = BTreeMap::new();
     for (key, field) in &fields {
@@ -199,41 +222,64 @@ fn validate_generated_files(
         }
         fallback.insert(key.clone(), field.source.clone());
         match entries.get(key) {
-            None => report.errors.push(format!("{key}: PART 패치에 대응하는 ko 번역 키가 없음")),
+            None => report
+                .errors
+                .push(format!("{key}: PART 패치에 대응하는 ko 번역 키가 없음")),
             Some(translated) => {
                 for finding in validate_key_translation(key, &field.source, translated) {
                     if finding.severity == Severity::Error {
-                        report.errors.push(format!("{key}: [{}] {}", finding.rule, finding.message));
+                        report
+                            .errors
+                            .push(format!("{key}: [{}] {}", finding.rule, finding.message));
                     }
                 }
                 if translated.chars().any(char::is_control)
                     || crate::tokens::extract_tokens(&field.source)
                         != crate::tokens::extract_tokens(translated)
                 {
-                    report.errors.push(format!("{key}: PART 번역의 제어 문자 또는 토큰 개수 불일치"));
+                    report.errors.push(format!(
+                        "{key}: PART 번역의 제어 문자 또는 토큰 개수 불일치"
+                    ));
                 }
             }
         }
         if let Some(source) = source_entries {
             if source.get(key) != Some(&field.source) {
-                report.errors.push(format!("{key}: PART 폴백/대상 매핑이 원문과 일치하지 않음"));
+                report
+                    .errors
+                    .push(format!("{key}: PART 폴백/대상 매핑이 원문과 일치하지 않음"));
             }
         }
     }
-    for key in entries.keys().filter(|key| key.starts_with("#KerbaLoc_Part_")) {
+    for key in entries
+        .keys()
+        .filter(|key| key.starts_with("#KerbaLoc_Part_"))
+    {
         if !fields.contains_key(key) {
-            report.errors.push(format!("{key}: 합성 ko 키에 PART 대상/영어 폴백이 없음"));
+            report
+                .errors
+                .push(format!("{key}: 합성 ko 키에 PART 대상/영어 폴백이 없음"));
         }
     }
     // Exact canonical generated files prohibit extra nodes, edits, selectors, references,
     // duplicate keys and dangling tokens that the tolerant ConfigNode parser may discard.
     if ko_text.replace("\r\n", "\n") != localization_cfg("ko", entries) {
-        report.errors.push("생성 PART 팩의 ko.cfg는 ko 전용 표준 Localization 구조여야 함".into());
+        report
+            .errors
+            .push("생성 PART 팩의 ko.cfg는 ko 전용 표준 Localization 구조여야 함".into());
     }
     if valid_mapping {
         for (path, expected, label) in [
-            (&patch_path, generated_parts_cfg(&fields), "Patches/parts.cfg"),
-            (&fallback_path, localization_cfg("en-us", &fallback), "Localization/en-us.cfg"),
+            (
+                &patch_path,
+                generated_parts_cfg(&fields),
+                "Patches/parts.cfg",
+            ),
+            (
+                &fallback_path,
+                localization_cfg("en-us", &fallback),
+                "Localization/en-us.cfg",
+            ),
         ] {
             match std::fs::read_to_string(path) {
                 Ok(actual) if actual.replace("\r\n", "\n") == expected => {}
@@ -275,7 +321,8 @@ pub fn validate_pack(
         r.errors.push(format!("알 수 없는 스키마: {}", meta.schema));
     }
     if !safe_component(&meta.lang) || !safe_component(&meta.mod_id) {
-        r.errors.push("pack.json: 안전하지 않은 언어 또는 모드 경로".into());
+        r.errors
+            .push("pack.json: 안전하지 않은 언어 또는 모드 경로".into());
         return r;
     }
     let cfg_path = dir.join("Localization").join(format!("{}.cfg", meta.lang));
@@ -350,7 +397,15 @@ pub fn validate_pack(
     if entries.is_empty() {
         r.errors.push("번역 항목이 비어 있음".into());
     }
-    validate_generated_files(dir, &meta, &metadata, &text, &entries, source_entries, &mut r);
+    validate_generated_files(
+        dir,
+        &meta,
+        &metadata,
+        &text,
+        &entries,
+        source_entries,
+        &mut r,
+    );
     if let Some(src) = source_entries {
         let mut translated = 0;
         for (k, dst) in &entries {
@@ -427,8 +482,10 @@ pub fn install_pack(ksp_root: &Path, dir: &Path) -> std::io::Result<PathBuf> {
         ));
     }
     if dest.exists() && (!dest.is_dir() || dest.symlink_metadata()?.file_type().is_symlink()) {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
-            "설치 경로가 일반 디렉터리가 아닙니다. 기존 경로를 유지합니다."));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "설치 경로가 일반 디렉터리가 아닙니다. 기존 경로를 유지합니다.",
+        ));
     }
     let parent = dest.parent().unwrap();
     std::fs::create_dir_all(parent)?;
@@ -438,7 +495,9 @@ pub fn install_pack(ksp_root: &Path, dir: &Path) -> std::io::Result<PathBuf> {
         .as_nanos();
     // Keep incomplete/new/backup CFG files outside GameData so a crash cannot load them.
     let workspace = ksp_root.join("KerbaLoc-staging").join(format!(
-        "install-{}-{}-{nonce}", meta.mod_id, std::process::id()
+        "install-{}-{}-{nonce}",
+        meta.mod_id,
+        std::process::id()
     ));
     std::fs::create_dir_all(&workspace)?;
     let stage = workspace.join("pack");
@@ -451,8 +510,10 @@ pub fn install_pack(ksp_root: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     let copied_report = validate_pack(&stage, None);
     if !copied_report.errors.is_empty() {
         let _ = std::fs::remove_dir_all(&workspace);
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
-            format!("복사한 팩 검증 실패:\n{}", copied_report.errors.join("\n"))));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("복사한 팩 검증 실패:\n{}", copied_report.errors.join("\n")),
+        ));
     }
     let replacing = dest.exists();
     if replacing {
@@ -465,7 +526,8 @@ pub fn install_pack(ksp_root: &Path, dir: &Path) -> std::io::Result<PathBuf> {
         if replacing {
             if let Err(restore_error) = std::fs::rename(&backup, &dest) {
                 return Err(std::io::Error::other(format!(
-                    "팩 교체 실패: {error}; 복구 실패: {restore_error}; 기존 팩 위치: {}", backup.display()
+                    "팩 교체 실패: {error}; 복구 실패: {restore_error}; 기존 팩 위치: {}",
+                    backup.display()
                 )));
             }
         }

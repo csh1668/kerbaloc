@@ -130,25 +130,41 @@ fn install_and_remove() {
 fn part_pack(dir: &std::path::Path) -> (String, BTreeMap<String, String>) {
     let key = parts::key("TestMod", "literalPart", "title");
     let source = "Original English title";
-    make_pack(dir, &format!("Localization\n{{\n\tko\n\t{{\n\t\t{key} = 번역한 부품 제목\n\t}}\n}}\n"));
+    make_pack(
+        dir,
+        &format!("Localization\n{{\n\tko\n\t{{\n\t\t{key} = 번역한 부품 제목\n\t}}\n}}\n"),
+    );
     let path = dir.join("pack.json");
-    let mut meta: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let mut meta: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     let field = serde_json::to_value(parts::PartField {
-        part_name: "literalPart".into(), field: "title".into(), source: source.into(),
-    }).unwrap();
+        part_name: "literalPart".into(),
+        field: "title".into(),
+        source: source.into(),
+    })
+    .unwrap();
     let mut fields = serde_json::Map::new();
     fields.insert(key.clone(), field);
     meta["part_fields"] = serde_json::Value::Object(fields);
     fs::write(path, serde_json::to_string_pretty(&meta).unwrap()).unwrap();
     fs::create_dir_all(dir.join("Patches")).unwrap();
-    fs::write(dir.join("Patches/parts.cfg"), format!("@PART[literalPart]\n{{\n\t@title = {key}\n}}\n")).unwrap();
-    fs::write(dir.join("Localization/en-us.cfg"), format!("Localization\n{{\n\ten-us\n\t{{\n\t\t{key} = {source}\n\t}}\n}}\n")).unwrap();
+    fs::write(
+        dir.join("Patches/parts.cfg"),
+        format!("@PART[literalPart]\n{{\n\t@title = {key}\n}}\n"),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Localization/en-us.cfg"),
+        format!("Localization\n{{\n\ten-us\n\t{{\n\t\t{key} = {source}\n\t}}\n}}\n"),
+    )
+    .unwrap();
     (key.clone(), BTreeMap::from([(key, source.into())]))
 }
 
 fn change_meta(dir: &std::path::Path, change: impl FnOnce(&mut serde_json::Value)) {
     let path = dir.join("pack.json");
-    let mut meta: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let mut meta: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     change(&mut meta);
     fs::write(path, serde_json::to_string_pretty(&meta).unwrap()).unwrap();
 }
@@ -159,11 +175,16 @@ fn generated_part_files_validate_and_keep_english_separate_from_ko() {
     let (key, source) = part_pack(dir.path());
     assert!(validate_pack(dir.path(), None).errors.is_empty());
     assert!(validate_pack(dir.path(), Some(&source)).errors.is_empty());
-    let ko = cfg::parse(&fs::read_to_string(dir.path().join("Localization/ko.cfg")).unwrap()).unwrap();
+    let ko =
+        cfg::parse(&fs::read_to_string(dir.path().join("Localization/ko.cfg")).unwrap()).unwrap();
     assert!(loc::extract_localization(&ko, "en-us").is_empty());
-    let en = cfg::parse(&fs::read_to_string(dir.path().join("Localization/en-us.cfg")).unwrap()).unwrap();
+    let en = cfg::parse(&fs::read_to_string(dir.path().join("Localization/en-us.cfg")).unwrap())
+        .unwrap();
     assert_eq!(loc::extract_localization(&en, "en-us"), source);
-    assert_eq!(loc::extract_localization(&en, "en-us")[&key], "Original English title");
+    assert_eq!(
+        loc::extract_localization(&en, "en-us")[&key],
+        "Original English title"
+    );
     assert!(loc::extract_localization(&en, "ko").is_empty());
 }
 
@@ -171,7 +192,11 @@ fn generated_part_files_validate_and_keep_english_separate_from_ko() {
 fn generated_files_accept_crlf_without_relaxing_structure() {
     let dir = tempfile::tempdir().unwrap();
     let (_, source) = part_pack(dir.path());
-    for relative in ["Localization/ko.cfg", "Localization/en-us.cfg", "Patches/parts.cfg"] {
+    for relative in [
+        "Localization/ko.cfg",
+        "Localization/en-us.cfg",
+        "Patches/parts.cfg",
+    ] {
         let path = dir.path().join(relative);
         let text = fs::read_to_string(&path).unwrap();
         fs::write(path, text.replace('\n', "\r\n")).unwrap();
@@ -181,16 +206,26 @@ fn generated_files_accept_crlf_without_relaxing_structure() {
 
 #[test]
 fn generated_pack_requires_both_sidefiles_and_corresponding_ko_key() {
-    for missing in ["Patches/parts.cfg", "Localization/en-us.cfg", "Localization/ko.cfg"] {
+    for missing in [
+        "Patches/parts.cfg",
+        "Localization/en-us.cfg",
+        "Localization/ko.cfg",
+    ] {
         let dir = tempfile::tempdir().unwrap();
         part_pack(dir.path());
         fs::remove_file(dir.path().join(missing)).unwrap();
-        assert!(!validate_pack(dir.path(), None).errors.is_empty(), "{missing}");
+        assert!(
+            !validate_pack(dir.path(), None).errors.is_empty(),
+            "{missing}"
+        );
     }
     let dir = tempfile::tempdir().unwrap();
     part_pack(dir.path());
     fs::write(dir.path().join("Localization/ko.cfg"), GOOD).unwrap();
-    assert!(validate_pack(dir.path(), None).errors.iter().any(|error| error.contains("ko 번역 키")));
+    assert!(validate_pack(dir.path(), None)
+        .errors
+        .iter()
+        .any(|error| error.contains("ko 번역 키")));
 }
 
 #[test]
@@ -209,7 +244,10 @@ fn generated_patch_rejects_wildcard_extra_fields_reference_changes_and_injection
             _ => unreachable!(),
         };
         fs::write(path, corrupt).unwrap();
-        assert!(!validate_pack(dir.path(), None).errors.is_empty(), "{change}");
+        assert!(
+            !validate_pack(dir.path(), None).errors.is_empty(),
+            "{change}"
+        );
     }
 }
 
@@ -229,7 +267,10 @@ fn generated_metadata_rejects_unsafe_targets_fields_keys_and_unknown_properties(
             }
             _ => unreachable!(),
         });
-        assert!(!validate_pack(dir.path(), None).errors.is_empty(), "{change}");
+        assert!(
+            !validate_pack(dir.path(), None).errors.is_empty(),
+            "{change}"
+        );
     }
 }
 
@@ -239,11 +280,20 @@ fn tampered_fallback_and_source_binding_are_rejected() {
     let (key, source) = part_pack(dir.path());
     let path = dir.path().join("Localization/en-us.cfg");
     let text = fs::read_to_string(&path).unwrap();
-    fs::write(&path, text.replace("Original English title", "Changed English title")).unwrap();
+    fs::write(
+        &path,
+        text.replace("Original English title", "Changed English title"),
+    )
+    .unwrap();
     assert!(!validate_pack(dir.path(), None).errors.is_empty());
-    change_meta(dir.path(), |meta| meta["part_fields"][&key]["source"] = "Changed English title".into());
+    change_meta(dir.path(), |meta| {
+        meta["part_fields"][&key]["source"] = "Changed English title".into()
+    });
     assert!(validate_pack(dir.path(), None).errors.is_empty());
-    assert!(validate_pack(dir.path(), Some(&source)).errors.iter().any(|error| error.contains("원문과 일치")));
+    assert!(validate_pack(dir.path(), Some(&source))
+        .errors
+        .iter()
+        .any(|error| error.contains("원문과 일치")));
 }
 
 #[test]
@@ -260,7 +310,10 @@ fn fallback_rejects_other_languages_extra_keys_and_injected_nodes() {
             _ => unreachable!(),
         };
         fs::write(path, corrupted).unwrap();
-        assert!(!validate_pack(dir.path(), None).errors.is_empty(), "{addition}");
+        assert!(
+            !validate_pack(dir.path(), None).errors.is_empty(),
+            "{addition}"
+        );
     }
 }
 
@@ -268,7 +321,9 @@ fn fallback_rejects_other_languages_extra_keys_and_injected_nodes() {
 fn generated_sidefiles_or_synthetic_keys_without_metadata_are_rejected() {
     let dir = tempfile::tempdir().unwrap();
     part_pack(dir.path());
-    change_meta(dir.path(), |meta| { meta.as_object_mut().unwrap().remove("part_fields"); });
+    change_meta(dir.path(), |meta| {
+        meta.as_object_mut().unwrap().remove("part_fields");
+    });
     assert!(!validate_pack(dir.path(), None).errors.is_empty());
     fs::remove_file(dir.path().join("Patches/parts.cfg")).unwrap();
     fs::remove_file(dir.path().join("Localization/en-us.cfg")).unwrap();
@@ -281,9 +336,16 @@ fn generated_pack_does_not_allow_english_inside_ko_cfg() {
     part_pack(dir.path());
     let path = dir.path().join("Localization/ko.cfg");
     let text = fs::read_to_string(&path).unwrap();
-    fs::write(path, text + "Localization\n{\n\ten-us\n\t{\n\t\t#other = Source\n\t}\n}\n").unwrap();
+    fs::write(
+        path,
+        text + "Localization\n{\n\ten-us\n\t{\n\t\t#other = Source\n\t}\n}\n",
+    )
+    .unwrap();
     let report = validate_pack(dir.path(), None);
-    assert!(report.errors.iter().any(|error| error.contains("ko 노드만")));
+    assert!(report
+        .errors
+        .iter()
+        .any(|error| error.contains("ko 노드만")));
 }
 
 #[test]
@@ -296,7 +358,10 @@ fn module_manager_required_before_replacing_existing_installation() {
     part_pack(replacement.path());
     let error = install_pack(ksp.path(), replacement.path()).unwrap_err();
     assert!(error.to_string().contains("ModuleManager"));
-    assert_eq!(fs::read_to_string(dest.join("Localization/ko.cfg")).unwrap(), GOOD);
+    assert_eq!(
+        fs::read_to_string(dest.join("Localization/ko.cfg")).unwrap(),
+        GOOD
+    );
     assert!(!dest.join("Patches/parts.cfg").exists());
     fs::write(ksp.path().join("GameData/ModuleManager.4.2.3.dll"), []).unwrap();
     install_pack(ksp.path(), replacement.path()).unwrap();
@@ -313,9 +378,21 @@ fn corrupt_replacement_is_rejected_before_deleting_old_installation() {
     fs::write(ksp.path().join("GameData/ModuleManager.4.2.3.dll"), []).unwrap();
     let replacement = tempfile::tempdir().unwrap();
     part_pack(replacement.path());
-    fs::write(replacement.path().join("Patches/parts.cfg"), "@PART[*]\n{\n\t@name = bad\n}\n").unwrap();
-    assert_eq!(install_pack(ksp.path(), replacement.path()).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
-    assert_eq!(fs::read_to_string(dest.join("Localization/ko.cfg")).unwrap(), GOOD);
+    fs::write(
+        replacement.path().join("Patches/parts.cfg"),
+        "@PART[*]\n{\n\t@name = bad\n}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        install_pack(ksp.path(), replacement.path())
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::InvalidData
+    );
+    assert_eq!(
+        fs::read_to_string(dest.join("Localization/ko.cfg")).unwrap(),
+        GOOD
+    );
 }
 
 #[test]
@@ -339,12 +416,23 @@ fn removal_restores_unmodified_literal_source_and_removes_generated_files() {
 fn extra_generated_cfg_is_rejected_but_legacy_pack_behavior_is_retained() {
     let dir = tempfile::tempdir().unwrap();
     part_pack(dir.path());
-    fs::write(dir.path().join("Patches/override.cfg"), "@PART[*]\n{\n\t@name = bad\n}\n").unwrap();
-    assert!(validate_pack(dir.path(), None).errors.iter().any(|error| error.contains("추가 CFG")));
+    fs::write(
+        dir.path().join("Patches/override.cfg"),
+        "@PART[*]\n{\n\t@name = bad\n}\n",
+    )
+    .unwrap();
+    assert!(validate_pack(dir.path(), None)
+        .errors
+        .iter()
+        .any(|error| error.contains("추가 CFG")));
     let legacy = tempfile::tempdir().unwrap();
     make_pack(legacy.path(), GOOD);
     fs::create_dir_all(legacy.path().join("Patches")).unwrap();
-    fs::write(legacy.path().join("Patches/custom.cfg"), "// existing legacy file\n").unwrap();
+    fs::write(
+        legacy.path().join("Patches/custom.cfg"),
+        "// existing legacy file\n",
+    )
+    .unwrap();
     assert!(validate_pack(legacy.path(), None).errors.is_empty());
 }
 
@@ -358,9 +446,16 @@ fn failed_replacement_copy_preserves_working_installation() {
     let dest = install_pack(ksp.path(), old.path()).unwrap();
     let replacement = tempfile::tempdir().unwrap();
     make_pack(replacement.path(), GOOD);
-    symlink(replacement.path().join("missing-asset"), replacement.path().join("broken-asset")).unwrap();
+    symlink(
+        replacement.path().join("missing-asset"),
+        replacement.path().join("broken-asset"),
+    )
+    .unwrap();
     assert!(validate_pack(replacement.path(), None).errors.is_empty());
     assert!(install_pack(ksp.path(), replacement.path()).is_err());
-    assert_eq!(fs::read_to_string(dest.join("Localization/ko.cfg")).unwrap(), GOOD);
+    assert_eq!(
+        fs::read_to_string(dest.join("Localization/ko.cfg")).unwrap(),
+        GOOD
+    );
     assert!(!dest.join("broken-asset").exists());
 }
