@@ -47,6 +47,8 @@ struct UnitInfo {
     display_name: String,
     version: Option<String>,
     keys: usize,
+    /// 원본 PART 이름·설명에서 추출한 개별 필드 수 (전체 keys에 포함).
+    part_keys: usize,
     source_hash: String,
     installed: bool,
     /// 번역 차단 사유 (블랙리스트 모드면 Some)
@@ -83,6 +85,7 @@ async fn scan_units(app: AppHandle, force: bool) -> Result<Vec<UnitInfo>, String
             display_name: u.display_name,
             version: u.version.raw,
             keys: u.entries.len(),
+            part_keys: u.part_fields.len(),
             source_hash: u.source_hash,
         })
         .collect())

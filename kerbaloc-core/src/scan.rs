@@ -1,6 +1,6 @@
-use crate::{avc, cfg, ckan::CkanRegistry, hash, loc};
+use crate::{avc, cfg, ckan::CkanRegistry, hash, loc, parts};
 use regex::Regex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -27,6 +27,7 @@ pub struct ModUnit {
     pub version: VersionInfo,
     pub files: Vec<PathBuf>,
     pub entries: BTreeMap<String, String>,
+    pub part_fields: BTreeMap<String, parts::PartField>,
     pub source_hash: String,
     pub keys_hash: String,
     pub official_langs: Vec<String>,
@@ -62,17 +63,21 @@ struct Owner {
 /// ② 없으면 top 폴더 하위 어디든 가장 얕은 것 (Versioning/ 등 실측 패턴)
 fn find_avc(top_dir: &Path, file: &Path) -> Option<avc::AvcInfo> {
     let mut best: Option<(avc::AvcInfo, bool, i64)> = None; // (info, is_ancestor, score)
-    for e in WalkDir::new(top_dir).into_iter().filter_map(Result::ok) {
-        if e.path().extension().is_none_or(|x| x != "version") {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(e.path()) else {
+    let mut versions: Vec<PathBuf> = WalkDir::new(top_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|x| x == "version"))
+        .map(|entry| entry.into_path())
+        .collect();
+    versions.sort();
+    for path in versions {
+        let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
         let Some(info) = avc::parse_version_file(&text) else {
             continue;
         };
-        let parent = e.path().parent().unwrap();
+        let parent = path.parent().unwrap();
         let is_ancestor = file.starts_with(parent);
         let depth = parent.components().count() as i64;
         let score = if is_ancestor { depth } else { -depth };
@@ -179,65 +184,134 @@ fn resolve_owner(ksp_root: &Path, file: &Path, ckan: Option<&CkanRegistry>) -> O
     }
 }
 
+/// Collect real localization keys in every language, including language-only
+/// files which do not otherwise create an English translation unit.
+fn real_localization_keys(root: &cfg::Node, keys: &mut BTreeSet<String>) {
+    if root.name == "Localization" {
+        for language in &root.children {
+            keys.extend(loc::extract_localization(root, &language.name).into_keys());
+        }
+    }
+    for child in &root.children {
+        real_localization_keys(child, keys);
+    }
+}
+
+struct ScannedFile {
+    path: PathBuf,
+    entries: BTreeMap<String, String>,
+    part_fields: Vec<parts::PartField>,
+    official_langs: Vec<String>,
+}
+
+struct Group {
+    owner: Owner,
+    files: Vec<PathBuf>,
+    entries: BTreeMap<String, String>,
+    part_fields: BTreeMap<String, parts::PartField>,
+    official_langs: Vec<String>,
+}
+
 pub fn scan_gamedata(ksp_root: &Path) -> Vec<ModUnit> {
     let gamedata = ksp_root.join("GameData");
     let ckan = CkanRegistry::load(ksp_root);
-    type Group = (Owner, Vec<PathBuf>, BTreeMap<String, String>, Vec<String>);
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
+    let mut paths: Vec<PathBuf> = WalkDir::new(&gamedata)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() != 1 || !entry.file_name().to_string_lossy().eq_ignore_ascii_case("KerbaLoc")
+        })
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| entry.path().extension().is_some_and(|x| x == "cfg"))
+        .map(|entry| entry.into_path())
+        .collect();
+    paths.sort();
+    let mut name_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut real_keys = BTreeSet::new();
+    let mut scanned = Vec::new();
 
-    for e in WalkDir::new(&gamedata).into_iter().filter_map(Result::ok) {
-        let p = e.path();
-        if p.extension().is_none_or(|x| x != "cfg") {
-            continue;
-        }
-        let rel = p
-            .strip_prefix(&gamedata)
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        if rel.starts_with("KerbaLoc/") {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(p) else {
+    // Discover names globally before selecting any synthetic entries. A second
+    // plain PART is ambiguous even if its text already uses localization tags.
+    for path in paths {
+        let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
         let Ok(root) = cfg::parse(&text) else {
             continue;
         };
+        for name in parts::plain_part_names(&root) {
+            *name_counts.entry(name.to_string()).or_default() += 1;
+        }
+        real_localization_keys(&root, &mut real_keys);
         let entries = loc::extract_localization(&root, "en-us");
-        if entries.is_empty() {
+        let part_fields = parts::extract(&root);
+        if entries.is_empty() && part_fields.is_empty() {
             continue;
         }
-        let owner = resolve_owner(ksp_root, p, ckan.as_ref());
         let langs: Vec<String> = OFFICIAL_LANGS
             .iter()
             .filter(|l| !loc::extract_localization(&root, l).is_empty())
             .map(|l| l.to_string())
             .collect();
+        scanned.push(ScannedFile {
+            path,
+            entries,
+            part_fields,
+            official_langs: langs,
+        });
+    }
+
+    for file in scanned {
+        let owner = resolve_owner(ksp_root, &file.path, ckan.as_ref());
+        let mut entries = file.entries;
+        let mut part_fields = BTreeMap::new();
+        for part_field in file.part_fields {
+            if name_counts.get(&part_field.part_name) != Some(&1) {
+                continue;
+            }
+            let key = parts::key(&owner.key, &part_field.part_name, &part_field.field);
+            if real_keys.contains(&key) {
+                continue;
+            }
+            entries.insert(key.clone(), part_field.source.clone());
+            part_fields.insert(key, part_field);
+        }
+        if entries.is_empty() {
+            continue;
+        }
         let g = groups
             .entry(owner.key.clone())
-            .or_insert_with(|| (owner, vec![], BTreeMap::new(), vec![]));
-        g.1.push(p.to_path_buf());
-        g.2.extend(entries);
-        for l in langs {
-            if !g.3.contains(&l) {
-                g.3.push(l);
+            .or_insert_with(|| Group {
+                owner,
+                files: vec![],
+                entries: BTreeMap::new(),
+                part_fields: BTreeMap::new(),
+                official_langs: vec![],
+            });
+        g.files.push(file.path);
+        g.entries.extend(entries);
+        g.part_fields.extend(part_fields);
+        for l in file.official_langs {
+            if !g.official_langs.contains(&l) {
+                g.official_langs.push(l);
             }
         }
     }
 
     groups
         .into_iter()
-        .map(|(key, (owner, files, entries, official_langs))| ModUnit {
-            source_hash: hash::source_hash(&entries),
-            keys_hash: hash::keys_hash(&entries),
+        .map(|(key, group)| ModUnit {
+            source_hash: hash::source_hash(&group.entries),
+            keys_hash: hash::keys_hash(&group.entries),
             mod_id: key,
-            id_source: owner.id_source,
-            display_name: owner.display,
-            version: owner.version,
-            files,
-            entries,
-            official_langs,
+            id_source: group.owner.id_source,
+            display_name: group.owner.display,
+            version: group.owner.version,
+            files: group.files,
+            entries: group.entries,
+            part_fields: group.part_fields,
+            official_langs: group.official_langs,
         })
         .collect()
 }

@@ -1,5 +1,8 @@
 use crate::cfg;
-use crate::pack::{validate_pack, PackMeta};
+use crate::pack::{
+    generated_cfg_errors, generated_parts_cfg, localization_cfg, safe_component, validate_generated_part,
+    validate_pack, PackMeta,
+};
 use crate::scan::ModUnit;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -43,25 +46,88 @@ pub fn build_pack(
     variant_id: &str,
     model_name: &str,
 ) -> anyhow::Result<()> {
-    std::fs::create_dir_all(out_dir.join("Localization"))?;
-    let mut ko = cfg::Node {
-        name: "ko".into(),
-        values: vec![],
-        children: vec![],
-    };
-    for (k, v) in translations {
-        ko.values.push((k.clone(), v.clone()));
+    anyhow::ensure!(!translations.is_empty(), "번역 항목이 비어 있음 — 기존 팩을 유지합니다");
+    anyhow::ensure!(safe_component(&unit.mod_id), "안전하지 않은 모드 ID — 기존 팩을 유지합니다");
+    let mut emitted_parts = BTreeMap::new();
+    for (key, translated) in translations {
+        let source = unit
+            .entries
+            .get(key)
+            .ok_or_else(|| anyhow::anyhow!("{key}: 원문에 없는 번역 키"))?;
+        anyhow::ensure!(
+            !key.trim().is_empty()
+                && key.trim() == key.as_str()
+                && !key.chars().any(char::is_control)
+                && !key.contains(['{', '}', '='])
+                && !key.contains("//"),
+            "{key:?}: 안전하지 않은 번역 키"
+        );
+        anyhow::ensure!(
+            !translated.chars().any(char::is_control),
+            "{key}: 번역 값에 제어 문자 포함"
+        );
+        for finding in crate::validate::validate_key_translation(key, source, translated) {
+            anyhow::ensure!(
+                finding.severity != crate::validate::Severity::Error,
+                "{key}: [{}] {}",
+                finding.rule,
+                finding.message
+            );
+        }
+        if let Some(field) = unit.part_fields.get(key) {
+            validate_generated_part(&unit.mod_id, key, field).map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(
+                source == &field.source,
+                "{key}: PART 원문과 번역 대상 원문이 일치하지 않음"
+            );
+            anyhow::ensure!(
+                crate::tokens::extract_tokens(source) == crate::tokens::extract_tokens(translated),
+                "{key}: PART 번역의 엔진 토큰 또는 토큰 개수가 일치하지 않음"
+            );
+            emitted_parts.insert(key.clone(), field.clone());
+        } else {
+            anyhow::ensure!(
+                !key.starts_with("#KerbaLoc_Part_"),
+                "{key}: 생성 PART 키의 대상 메타데이터가 없음"
+            );
+        }
     }
-    let root = cfg::Node {
-        name: String::new(),
-        values: vec![],
-        children: vec![cfg::Node {
-            name: "Localization".into(),
-            values: vec![],
-            children: vec![ko],
-        }],
-    };
-    std::fs::write(out_dir.join("Localization/ko.cfg"), cfg::serialize(&root))?;
+    let ko_text = localization_cfg("ko", translations);
+    anyhow::ensure!(
+        crate::loc::extract_localization(&cfg::parse(&ko_text)?, "ko") == *translations,
+        "번역 cfg 라운드트립 불일치"
+    );
+    if !emitted_parts.is_empty() {
+        let errors = generated_cfg_errors(out_dir);
+        anyhow::ensure!(errors.is_empty(), "{}", errors.join("\n"));
+    }
+    std::fs::create_dir_all(out_dir.join("Localization"))?;
+    std::fs::write(out_dir.join("Localization/ko.cfg"), ko_text)?;
+
+    if emitted_parts.is_empty() {
+        // Only files owned by this generator are removed when rebuilding a tag-only pack.
+        for relative in ["Patches/parts.cfg", "Localization/en-us.cfg"] {
+            match std::fs::remove_file(out_dir.join(relative)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    } else {
+        std::fs::create_dir_all(out_dir.join("Patches"))?;
+        std::fs::write(
+            out_dir.join("Patches/parts.cfg"),
+            generated_parts_cfg(&emitted_parts),
+        )?;
+        let fallback = emitted_parts
+            .iter()
+            .map(|(key, field)| (key.clone(), field.source.clone()))
+            .collect();
+        std::fs::write(
+            out_dir.join("Localization/en-us.cfg"),
+            localization_cfg("en-us", &fallback),
+        )?;
+    }
 
     let meta = PackMeta {
         schema: "kerbaloc/pack@1".into(),
@@ -69,11 +135,17 @@ pub fn build_pack(
         mod_id: unit.mod_id.clone(),
         variant_id: variant_id.to_string(),
         src_sha256: unit.source_hash.clone(),
-        keys_translated: translations.len(),
+        keys_translated: translations
+            .iter()
+            .filter(|(key, value)| unit.entries.get(*key) != Some(*value))
+            .count(),
         keys_target: unit.entries.len(),
     };
     let mut meta_json = serde_json::to_value(&meta)?;
     meta_json["model"] = serde_json::Value::String(model_name.to_string());
+    if !emitted_parts.is_empty() {
+        meta_json["part_fields"] = serde_json::to_value(&emitted_parts)?;
+    }
     std::fs::write(
         out_dir.join("pack.json"),
         serde_json::to_string_pretty(&meta_json)?,
