@@ -146,6 +146,9 @@ fn part_pack(dir: &std::path::Path) -> (String, BTreeMap<String, String>) {
     let mut fields = serde_json::Map::new();
     fields.insert(key.clone(), field);
     meta["part_fields"] = serde_json::Value::Object(fields);
+    meta["src_sha256"] = kerbaloc_core::hash::source_hash(
+        &BTreeMap::from([(key.clone(), source.to_string())]),
+    ).into();
     fs::write(path, serde_json::to_string_pretty(&meta).unwrap()).unwrap();
     fs::create_dir_all(dir.join("Patches")).unwrap();
     fs::write(
@@ -159,6 +162,18 @@ fn part_pack(dir: &std::path::Path) -> (String, BTreeMap<String, String>) {
     )
     .unwrap();
     (key.clone(), BTreeMap::from([(key, source.into())]))
+}
+
+fn install_part_source(ksp: &std::path::Path) -> std::path::PathBuf {
+    let source = ksp.join("GameData/TestMod/Parts/part.cfg");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::write(&source, "PART\n{\n\tname = literalPart\n\ttitle = Original English title\n}\n").unwrap();
+    fs::create_dir_all(ksp.join("CKAN")).unwrap();
+    fs::write(ksp.join("CKAN/registry.json"), r#"{
+        "installed_modules": {"TestMod": {"source_module": {"identifier":"TestMod","version":"1.0"}}},
+        "installed_files": {"GameData/TestMod/Parts/part.cfg":"TestMod"}
+    }"#).unwrap();
+    source
 }
 
 fn change_meta(dir: &std::path::Path, change: impl FnOnce(&mut serde_json::Value)) {
@@ -364,6 +379,7 @@ fn module_manager_required_before_replacing_existing_installation() {
     );
     assert!(!dest.join("Patches/parts.cfg").exists());
     fs::write(ksp.path().join("GameData/ModuleManager.4.2.3.dll"), []).unwrap();
+    install_part_source(ksp.path());
     install_pack(ksp.path(), replacement.path()).unwrap();
     assert!(dest.join("Patches/parts.cfg").is_file());
     assert!(dest.join("Localization/en-us.cfg").is_file());
@@ -398,6 +414,7 @@ fn corrupt_replacement_is_rejected_before_deleting_old_installation() {
 #[test]
 fn removal_restores_unmodified_literal_source_and_removes_generated_files() {
     let ksp = tempfile::tempdir().unwrap();
+    install_part_source(ksp.path());
     let original = ksp.path().join("GameData/TestMod/Parts/part.cfg");
     fs::create_dir_all(original.parent().unwrap()).unwrap();
     let source = "PART\n{\n\tname = literalPart\n\ttitle = Original English title\n}\n";
@@ -410,6 +427,33 @@ fn removal_restores_unmodified_literal_source_and_removes_generated_files() {
     assert!(remove_pack(ksp.path(), "ko", "TestMod").unwrap());
     assert!(!installed.exists());
     assert_eq!(fs::read_to_string(original).unwrap(), source);
+}
+
+#[test]
+fn generated_install_requires_matching_full_gamedata_before_replacing_old_pack() {
+    for problem in ["missing", "changed", "duplicate"] {
+        let ksp = tempfile::tempdir().unwrap();
+        let old = tempfile::tempdir().unwrap();
+        make_pack(old.path(), GOOD);
+        let dest = install_pack(ksp.path(), old.path()).unwrap();
+        let source = install_part_source(ksp.path());
+        fs::write(ksp.path().join("GameData/ModuleManager.4.2.3.dll"), []).unwrap();
+        match problem {
+            "missing" => fs::remove_file(&source).unwrap(),
+            "changed" => fs::write(&source, "PART\n{\nname = literalPart\ntitle = Updated title\n}\n").unwrap(),
+            "duplicate" => {
+                let other = ksp.path().join("GameData/Other/part.cfg");
+                fs::create_dir_all(other.parent().unwrap()).unwrap();
+                fs::copy(&source, other).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let replacement = tempfile::tempdir().unwrap();
+        part_pack(replacement.path());
+        assert!(install_pack(ksp.path(), replacement.path()).is_err(), "{problem}");
+        assert_eq!(fs::read_to_string(dest.join("Localization/ko.cfg")).unwrap(), GOOD);
+        assert!(!dest.join("Patches/parts.cfg").exists());
+    }
 }
 
 #[test]

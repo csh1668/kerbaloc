@@ -470,6 +470,34 @@ pub fn install_pack(ksp_root: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     }
     let meta: PackMeta = serde_json::from_str(&std::fs::read_to_string(dir.join("pack.json"))?)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    if let Some(raw_fields) = metadata.get("part_fields") {
+        // A source-repository snapshot cannot establish uniqueness in the user's
+        // actual installation. Re-scan all GameData before activating PART edits.
+        let unit = crate::scan::scan_gamedata(ksp_root)
+            .into_iter()
+            .find(|unit| unit.mod_id == meta.mod_id)
+            .ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "PART 팩 대상 모드를 현재 GameData에서 확인할 수 없습니다. 모드 식별자 또는 중복 부품 이름을 확인해 주세요.",
+            ))?;
+        let fields: BTreeMap<String, parts::PartField> = serde_json::from_value(raw_fields.clone())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        if unit.source_hash != meta.src_sha256
+            || fields.iter().any(|(key, field)| unit.part_fields.get(key) != Some(field))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "PART 팩과 현재 GameData의 원문/대상이 일치하지 않습니다. 모드 버전 또는 부품 이름 충돌을 확인하고 현재 설치본에서 팩을 다시 생성해 주세요.",
+            ));
+        }
+        let source_report = validate_pack(dir, Some(&unit.entries));
+        if !source_report.errors.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("현재 GameData 원문 검증 실패:\n{}", source_report.errors.join("\n")),
+            ));
+        }
+    }
     let dest = ksp_root
         .join("GameData")
         .join("KerbaLoc")
